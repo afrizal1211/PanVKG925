@@ -101,21 +101,23 @@ jobs:
           # releases into a local prefix and expose it via PKG_CONFIG_PATH /
           # CMAKE_PREFIX_PATH for the native (host) configure below.
           prefix="$RUNNER_TEMP/clc-deps"
-          # SPIRV-Headers has no v2024.x tags; use the exact commit that
-          # SPIRV-Tools v2024.3 pins (from its DEPS file) so the two match.
+          # Mesa's CLC needs SPIRV-Tools with SetAllowPtrTypeMismatch
+          # (KhronosGroup/SPIRV-Tools#5534), which landed after v2024.3;
+          # v2024.4 has it. SPIRV-Headers has no matching tags, so use the
+          # exact commit SPIRV-Tools v2024.4 pins in its DEPS file.
           mkdir -p "$RUNNER_TEMP/spirv-headers"
           git -C "$RUNNER_TEMP/spirv-headers" init -q
           git -C "$RUNNER_TEMP/spirv-headers" remote add origin \
             https://github.com/KhronosGroup/SPIRV-Headers.git
           git -C "$RUNNER_TEMP/spirv-headers" fetch -q --depth 1 origin \
-            2acb319af38d43be3ea76bfabf3998e5281d8d12
+            3f17b2af6784bfa2c5aa5dbb8e0e74a607dd8b3b
           git -C "$RUNNER_TEMP/spirv-headers" checkout -q FETCH_HEAD
 
           mkdir -p "$RUNNER_TEMP/spirv-tools"
           git -C "$RUNNER_TEMP/spirv-tools" init -q
           git -C "$RUNNER_TEMP/spirv-tools" remote add origin \
             https://github.com/KhronosGroup/SPIRV-Tools.git
-          git -C "$RUNNER_TEMP/spirv-tools" fetch -q --depth 1 origin tag v2024.3
+          git -C "$RUNNER_TEMP/spirv-tools" fetch -q --depth 1 origin tag v2024.4
           git -C "$RUNNER_TEMP/spirv-tools" checkout -q FETCH_HEAD
           cmake -S "$RUNNER_TEMP/spirv-tools" -B "$RUNNER_TEMP/spirv-tools/build" \
             -DCMAKE_BUILD_TYPE=Release \
