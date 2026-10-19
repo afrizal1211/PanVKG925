@@ -20,7 +20,7 @@ builddir="${BUILDDIR:-build-android-aarch64}"
 if [ -n "${ANDROID_NDK_TOOLCHAIN:-}" ]; then
     export PATH="$ANDROID_NDK_TOOLCHAIN/bin:$PATH"
 elif [ -n "${ANDROID_NDK_HOME:-}" ]; then
-    export PATH="$ANDROID_NDK_HOME/toolchain/llvm/prebuilt/linux-x86_64/bin:$PATH"
+    export PATH="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
 fi
 
 if ! command -v aarch64-linux-android34-clang >/dev/null 2>&1; then

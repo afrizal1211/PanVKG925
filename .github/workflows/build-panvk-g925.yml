@@ -34,12 +34,26 @@ jobs:
       - name: Install Android NDK r27
         run: |
           set -euo pipefail
-          curl -fsSL -o /tmp/ndk.zip \
-            "https://dl.google.com/android/repository/android-ndk-r27-linux.zip"
-          unzip -q /tmp/ndk.zip -d "$RUNNER_TEMP"
-          echo "ANDROID_NDK_HOME=$RUNNER_TEMP/android-ndk-r27" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_TOOLCHAIN=$RUNNER_TEMP/android-ndk-r27/toolchain/llvm/prebuilt/linux-x86_64" >> "$GITHUB_ENV"
-          echo "$RUNNER_TEMP/android-ndk-r27/toolchain/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
+          ndk_root="$RUNNER_TEMP/android-ndk-r27"
+          ndk_zip="$RUNNER_TEMP/android-ndk-r27-linux.zip"
+          if [ ! -x "$ndk_root/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang" ]; then
+            echo "downloading NDK r27..."
+            curl -fL --retry 3 -o "$ndk_zip" \
+              "https://dl.google.com/android/repository/android-ndk-r27-linux.zip"
+            echo "downloaded: $(du -h "$ndk_zip" | cut -f1)"
+            rm -rf "$ndk_root"
+            unzip -q "$ndk_zip" -d "$RUNNER_TEMP"
+          fi
+          tc="$ndk_root/toolchains/llvm/prebuilt/linux-x86_64"
+          test -x "$tc/bin/aarch64-linux-android34-clang" || {
+            echo "error: aarch64-linux-android34-clang missing under $tc/bin" >&2
+            ls -l "$tc/bin" 2>&1 | head -40 >&2
+            exit 1
+          }
+          echo "NDK ready: $("$tc/bin/clang" --version | head -1)"
+          echo "ANDROID_NDK_HOME=$ndk_root" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_TOOLCHAIN=$tc" >> "$GITHUB_ENV"
+          echo "$tc/bin" >> "$GITHUB_PATH"
 
       - name: Build libdrm for Android aarch64
         run: |
