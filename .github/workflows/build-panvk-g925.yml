@@ -28,6 +28,15 @@ jobs:
             meson ninja-build pkg-config python3-pip python3-mako \
             python3-yaml python3-attr python3-setuptools gcc g++ \
             glslang-tools
+          # Host LLVM + CLang + SPIRV-Tools + SPIRV-LLVM-Translator are needed
+          # to build the native mesa_clc / vtn_bindgen2 shader generators that
+          # panfrost's libpan (OpenCL source) is compiled with during the cross
+          # build. These run on the x86_64 runner only; the target driver does
+          # not link LLVM.
+          sudo apt-get install -y --no-install-recommends \
+            llvm-dev libclang-dev libclang-cpp-dev clang \
+            libspirv-tools-dev spirv-tools libllvmspirvlib-dev \
+            zlib1g-dev libexpat1-dev
           python3 -m pip install --user --break-system-packages \
             'meson>=1.4' mako
 
@@ -85,7 +94,56 @@ jobs:
           echo "PKG_CONFIG_LIBDIR=$RUNNER_TEMP/libdrm-install/lib/pkgconfig" >> "$GITHUB_ENV"
           echo "PKG_CONFIG_PATH=$RUNNER_TEMP/libdrm-install/lib/pkgconfig" >> "$GITHUB_ENV"
 
-      - name: Configure Mesa
+      - name: Build SPIRV-Tools for the host (>= 2024.1)
+        run: |
+          set -euo pipefail
+          # Ubuntu 24.04 ships SPIRV-Tools 2023.1, but Mesa's CLC requires
+          # >= 2024.1. Build a pinned release into a local prefix and expose it
+          # through PKG_CONFIG_PATH for the native (host) configure below.
+          sudo apt-get install -y --no-install-recommends cmake git
+          git clone --depth 1 -b "v2024.3" \
+            https://github.com/KhronosGroup/SPIRV-Tools.git "$RUNNER_TEMP/spirv-tools"
+          git clone --depth 1 -b "v2024.3" \
+            https://github.com/KhronosGroup/SPIRV-Headers.git "$RUNNER_TEMP/spirv-headers"
+          cmake -S "$RUNNER_TEMP/spirv-tools" -B "$RUNNER_TEMP/spirv-tools/build" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/spirv-tools-install" \
+            -DSPIRV-Headers_SOURCE_DIR="$RUNNER_TEMP/spirv-headers" \
+            -DSPIRV_SKIP_TESTS=ON -DSPIRV_WERROR=OFF
+          cmake --build "$RUNNER_TEMP/spirv-tools/build" -j"$(nproc)"
+          cmake --install "$RUNNER_TEMP/spirv-tools/build"
+          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/spirv-tools-install/lib/pkgconfig:$PKG_CONFIG_PATH" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=$RUNNER_TEMP/spirv-tools-install" >> "$GITHUB_ENV"
+
+      - name: Build host shader generators (mesa_clc, vtn_bindgen2)
+        run: |
+          set -euo pipefail
+          export PKG_CONFIG_PATH="$RUNNER_TEMP/spirv-tools-install/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+          export CMAKE_PREFIX_PATH="$RUNNER_TEMP/spirv-tools-install"
+          meson setup build-native \
+            --buildtype release \
+            -Dplatforms= \
+            -Dgallium-drivers= \
+            -Dvulkan-drivers= \
+            -Dgallium-rusticl=false \
+            -Dmesa-clc=enabled \
+            -Dspirv-tools=enabled \
+            -Dinstall-mesa-clc=true \
+            -Dbuild-tests=false \
+            -Dglx=disabled \
+            -Degl=disabled \
+            -Dopengl=false \
+            -Dgles1=disabled -Dgles2=disabled \
+            -Dvalgrind=disabled -Dlibunwind=disabled -Dzstd=disabled
+          ninja -C build-native src/compiler/clc/mesa_clc src/compiler/spirv/vtn_bindgen2
+          tool_bin="$PWD/build-native/src/compiler/clc"
+          test -x "$tool_bin/mesa_clc" || { echo "mesa_clc not built" >&2; exit 1; }
+          test -x "$PWD/build-native/src/compiler/spirv/vtn_bindgen2" || { echo "vtn_bindgen2 not built" >&2; exit 1; }
+          echo "MESA_CLC_DIR=$tool_bin" >> "$GITHUB_ENV"
+          echo "$tool_bin" >> "$GITHUB_PATH"
+          echo "$PWD/build-native/src/compiler/spirv" >> "$GITHUB_PATH"
+
+      - name: Configure Mesa (cross, using host generators)
         run: |
           set -euo pipefail
           meson setup build-android-aarch64 \
@@ -102,6 +160,7 @@ jobs:
             -Dgallium-va=disabled \
             -Dvideo-codecs= \
             -Dbuild-tests=false \
+            -Dmesa-clc=system \
             -Dllvm=disabled \
             -Dvalgrind=disabled \
             -Dlibunwind=disabled \
