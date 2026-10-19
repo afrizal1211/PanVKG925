@@ -1,0 +1,15 @@
+.cache
+.vscode*
+*.kdev4
+*.pyc
+*.pyo
+*.out
+/build
+.venv/
+*.mda.tar
+
+# Agent session transcripts and per-tool state are not source.
+.claude/context-saves/
+.claude/compact-memory/
+.claude/settings.local.json
+src/panfrost/vulkan/tests/.claude/

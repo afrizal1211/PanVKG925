@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /home/zl/.claude/tools/ledger_inject.py",
+            "statusMessage": "[driver-ledger] Injecting ledger"
+          }
+        ]
+      }
+    ]
+  }
+}
