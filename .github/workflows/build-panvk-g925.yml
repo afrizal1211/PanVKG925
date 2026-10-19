@@ -16,6 +16,7 @@ jobs:
       NDK_VERSION: '27.0.12077973'
       ANDROID_API: '34'
       LIBDRM_VERSION: '2.4.123'
+      G925_DRIVER_VERSION: 'PanVK G925 0.1.0-alpha.1'
 
     steps:
       - name: Checkout
@@ -229,24 +230,96 @@ jobs:
       - name: Compile
         run: ninja -C build-android-aarch64
 
-      - name: Collect artifacts
-        if: always()
+      - name: Package Winlator/Ludashi driver zip
         run: |
           set -euo pipefail
           mkdir -p out
-          find build-android-aarch64 -name 'libvulkan_panfrost.so' \
-            -o -name 'libvulkan_panvk*.so' | while read -r so; do
-            cp "$so" out/
-          done
-          ls -l out || true
-          ( cd out && for f in *.so; do [ -e "$f" ] && sha256sum "$f"; done ) > out/SHA256SUMS || true
+          so="$(find build-android-aarch64 -name 'libvulkan_panfrost.so' -print -quit)"
+          test -n "$so" || { echo "libvulkan_panfrost.so not found" >&2; exit 1; }
+          cp "$so" out/libvulkan_panfrost.so
+          strip --strip-unneeded out/libvulkan_panfrost.so 2>/dev/null || \
+            "${ANDROID_NDK_TOOLCHAIN}/bin/llvm-strip" --strip-unneeded out/libvulkan_panfrost.so || true
+          sha="$(sha256sum out/libvulkan_panfrost.so | cut -d' ' -f1)"
+          size="$(stat -c%s out/libvulkan_panfrost.so)"
+          build_id="$(readelf -n out/libvulkan_panfrost.so 2>/dev/null | awk '/Build ID:/{print $3}' || true)"
+
+          # Vulkan 1.4 core is what current PanVK reports; keep the ICD/loader
+          # api_version explicit so Winlator/Ludashi loaders accept it.
+          cat > out/icd.json <<'EOF'
+          {"ICD":{"library_path":"./libvulkan_panfrost.so","api_version":"1.4.363"}}
+          EOF
+
+          # meta.json is a superset: the wonderkast/Winlator schemaVersion=1
+          # keys (author/description/driverVersion/libraryName/minApi/name/
+          # packageVersion/sanitizedArtifactSha256/schemaVersion/vendor) that
+          # Winlator's "GPU driver -> Import .zip" parses, plus the
+          # DroidDeck-style kbase/arch fields so the same zip also imports
+          # there. schemaVersion stays 1 for the base contract.
+          python3 - "$sha" "$size" "$build_id" <<'PY'
+          import json, os, sys
+          sha, size, build_id = sys.argv[1], int(sys.argv[2]), (sys.argv[3] or "")
+          drv = os.environ["G925_DRIVER_VERSION"]
+          meta = {
+            "schemaVersion": 1,
+            "author": "afrizal1211",
+            "vendor": "Mesa",
+            "name": "PanVK G925 (Mali-G925-Immortalis MC11)",
+            # ADPKG requires driverVersion to match ^[0-9]+.[0-9]+.[0-9]+(-.+)?$
+            "driverVersion": "1.0.0-mc11",
+            "driverVersionLabel": drv + " / Mesa panfrost (kbase CSF)",
+            "packageVersion": "0.1.0-alpha.1",
+            "libraryName": "libvulkan_panfrost.so",
+            "minApi": 34,
+            "sanitizedArtifactSha256": sha,
+            "description": (
+              "PanVK (Mesa) Vulkan ICD for the 11-core Mali-G925-Immortalis "
+              "(MT6991/MT8799, Dimensity 9400+) over the vendor mali_kbase CSF "
+              "kernel driver (no DRM render node needed). Includes the MC11 "
+              "core-count fix so the driver accepts the 11-core shader_present "
+              "mask. Alpha build; Winlator/Ludashi/DXVK compatibility is "
+              "experimental and this is not a Vulkan conformance claim."
+            ),
+            "kind": "android-vulkan-icd",
+            "abi": "android-aarch64-bionic",
+            "libc": "bionic",
+            "gpuFamily": "mali",
+            "guestBackend": "mali-kbase",
+            "maliPanArch": 13,
+            "maliKbaseFrontend": "csf",
+            "maliKbaseUapiMajor": 1,
+            "maliKbaseMinUapiMinor": 30,
+            "maliKbaseMaxUapiMinor": 30,
+            "coreMask": "0xEE0067",
+            "coreCount": 11,
+            "gpuId": "0xd8300015",
+            "sourceRepo": "afrizal1211/PanVKG925",
+            "artifactSize": size,
+            "artifactBuildId": build_id,
+            "icd": "icd.json",
+            "files": ["libvulkan_panfrost.so", "icd.json"],
+            "filesSha256": {"libvulkan_panfrost.so": sha},
+          }
+          with open("out/meta.json", "w") as f:
+              json.dump(meta, f, separators=(",", ":"), sort_keys=True)
+          print(json.dumps(meta, indent=2))
+          PY
+
+          # The import zip must have these at its root.
+          ( cd out && rm -f panvk-g925-*.zip && \
+            zip -q panvk-g925-aarch64.zip libvulkan_panfrost.so icd.json meta.json )
+          echo "=== package contents ==="
+          unzip -l out/panvk-g925-aarch64.zip
+          ( cd out && sha256sum libvulkan_panfrost.so icd.json meta.json \
+              panvk-g925-aarch64.zip ) > out/SHA256SUMS
+          cat out/SHA256SUMS
 
       - name: Upload driver
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: panvk-g925-aarch64
-          path: out/
+          path: |
+            out/
           if-no-files-found: warn
 
       - name: Upload build logs on failure

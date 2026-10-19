@@ -54,6 +54,40 @@ LIBDRM_SRC=/path/to/libdrm \
 libdrm cross-build, Mesa configure + compile — and uploads
 `libvulkan_panfrost.so` as the `panvk-g925-aarch64` artifact.
 
+## Install (Winlator / Ludashi / DroidDeck)
+
+The released zip is an **Android Driver Package (ADPKG)** — the format that
+Winlator, Ludashi and the other libadrenotools-based loaders import. It contains,
+at the **zip root**:
+
+| File | Purpose |
+|---|---|
+| `libvulkan_panfrost.so` | the aarch64 **bionic** Vulkan ICD |
+| `meta.json` | ADPKG metadata (`schemaVersion=1`); required keys `schemaVersion,name,author,packageVersion,vendor,driverVersion,minApi` |
+| `icd.json` | explicit loader manifest (`{"ICD":{"library_path":"./libvulkan_panfrost.so","api_version":"1.4.363"}}`) |
+
+`meta.json` follows the [ADPKG schema](https://github.com/bylaws/libadrenotools)
+(`vendor` is `"Mesa"`, `driverVersion` matches `^[0-9]+.[0-9]+.[0-9]+(-.+)?$`)
+and adds the kbase/arch fields (`guestBackend`, `maliPanArch:13`,
+`maliKbaseFrontend:"csf"`, `coreCount:11`, `coreMask:"0xEE0067"`) used by
+DroidDeck-style apps.
+
+To install in Winlator/Ludashi:
+
+1. Download `panvk-g925-aarch64.zip` from the latest release.
+2. Open the app → **Components** (or Settings) → **GPU driver** → **Import .zip**.
+3. Select the zip, then pick **PanVK G925 (Mali-G925-Immortalis MC11)** as the
+   Vulkan driver for your container.
+
+The driver talks to the vendor **`mali_kbase`** CSF kernel driver via `/dev/mali0`
+and needs **no DRM render node**, so it works on stock, non-root MT6991 devices.
+
+Build a package locally from a compiled driver with:
+
+```sh
+ci/package-winlator-driver.sh build-android-aarch64/src/vulkan/.../libvulkan_panfrost.so out
+```
+
 ## Notes
 
 - **Headless only.** The kbase backend has no dma-buf export, so real swapchains
@@ -63,3 +97,4 @@ libdrm cross-build, Mesa configure + compile — and uploads
   `PANVK_KBASE_EXPERIMENT` switch and only after passing per-item hardware
   criteria. Do not set it in production.
 - This does not replace the vendor OpenGL ES stack; it is a Vulkan driver.
+- See [CHANGELOG.md](CHANGELOG.md) for release history.
