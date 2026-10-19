@@ -38,22 +38,23 @@ jobs:
             "https://dl.google.com/android/repository/android-ndk-r27-linux.zip"
           unzip -q /tmp/ndk.zip -d "$RUNNER_TEMP"
           echo "ANDROID_NDK_HOME=$RUNNER_TEMP/android-ndk-r27" >> "$GITHUB_ENV"
-          echo "$RUNNER_TEMP/android-ndk-r27/toolchain/bin" >> "$GITHUB_PATH"
+          echo "ANDROID_NDK_TOOLCHAIN=$RUNNER_TEMP/android-ndk-r27/toolchain/llvm/prebuilt/linux-x86_64" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/android-ndk-r27/toolchain/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
 
       - name: Build libdrm for Android aarch64
         run: |
           set -euo pipefail
           src="$RUNNER_TEMP/libdrm"
           git clone --depth 1 -b "libdrm-${LIBDRM_VERSION}" \
-            https://gitlab.freedesktop.org/mesa/drm.git "$src" || \
-          git clone --depth 1 -b "libdrm-${LIBDRM_VERSION}" \
-            https://github.com/Distrotech/libdrm.git "$src"
+            https://gitlab.freedesktop.org/mesa/drm.git "$src"
           cd "$src"
           cat > ndk-aarch64.ini <<EOF
           [binaries]
           c = 'aarch64-linux-android${ANDROID_API}-clang'
+          cpp = 'aarch64-linux-android${ANDROID_API}-clang++'
           ar = 'llvm-ar'
           strip = 'llvm-strip'
+          pkgconfig = 'pkg-config'
           [host_machine]
           system = 'android'
           cpu_family = 'aarch64'
@@ -61,6 +62,7 @@ jobs:
           endian = 'little'
           EOF
           meson setup build --cross-file ndk-aarch64.ini --prefix="$RUNNER_TEMP/libdrm-install" \
+            --libdir=lib \
             -Dintel=disabled -Dradeon=disabled -Damdgpu=disabled -Dnouveau=disabled \
             -Dvmwgfx=disabled -Dfreedreno=disabled -Dvc4=disabled -Detnaviv=disabled \
             -Dtests=false -Dman-pages=disabled
