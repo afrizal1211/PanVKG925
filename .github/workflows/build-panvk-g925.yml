@@ -101,10 +101,12 @@ jobs:
           # releases into a local prefix and expose it via PKG_CONFIG_PATH /
           # CMAKE_PREFIX_PATH for the native (host) configure below.
           prefix="$RUNNER_TEMP/clc-deps"
-          git clone --depth 1 -b "v2024.3" \
+          # Tags can't be shallow-cloned with --depth 1; use --filter=blob:none
+          # instead so we still get the tag ref without full blob history.
+          git clone --filter=blob:none --branch "v2024.3" \
             https://github.com/KhronosGroup/SPIRV-Headers.git "$RUNNER_TEMP/spirv-headers"
 
-          git clone --depth 1 -b "v2024.3" \
+          git clone --filter=blob:none --branch "v2024.3" \
             https://github.com/KhronosGroup/SPIRV-Tools.git "$RUNNER_TEMP/spirv-tools"
           cmake -S "$RUNNER_TEMP/spirv-tools" -B "$RUNNER_TEMP/spirv-tools/build" \
             -DCMAKE_BUILD_TYPE=Release \
