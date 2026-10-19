@@ -100,8 +100,6 @@ jobs:
             -Dglx=disabled \
             -Degl=disabled \
             -Dgallium-va=disabled \
-            -Dgallium-vdpau=disabled \
-            -Dgallium-xa=disabled \
             -Dvideo-codecs= \
             -Dbuild-tests=false \
             -Dllvm=disabled \
