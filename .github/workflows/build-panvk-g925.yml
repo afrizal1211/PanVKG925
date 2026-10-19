@@ -101,13 +101,14 @@ jobs:
           # releases into a local prefix and expose it via PKG_CONFIG_PATH /
           # CMAKE_PREFIX_PATH for the native (host) configure below.
           prefix="$RUNNER_TEMP/clc-deps"
-          # Tags can't be shallow-cloned with --depth 1; use --filter=blob:none
-          # instead so we still get the tag ref without full blob history.
-          git clone --filter=blob:none --branch "v2024.3" \
+          # Clone without checkout so tags resolve, then pin the exact release.
+          git clone --filter=blob:none --no-checkout \
             https://github.com/KhronosGroup/SPIRV-Headers.git "$RUNNER_TEMP/spirv-headers"
+          git -C "$RUNNER_TEMP/spirv-headers" checkout v2024.3
 
-          git clone --filter=blob:none --branch "v2024.3" \
+          git clone --filter=blob:none --no-checkout \
             https://github.com/KhronosGroup/SPIRV-Tools.git "$RUNNER_TEMP/spirv-tools"
+          git -C "$RUNNER_TEMP/spirv-tools" checkout v2024.3
           cmake -S "$RUNNER_TEMP/spirv-tools" -B "$RUNNER_TEMP/spirv-tools/build" \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="$prefix" \
@@ -119,8 +120,9 @@ jobs:
           # SPIRV-LLVM-Translator, pinned to the LLVM major shipped by Ubuntu
           # 24.04 (18) so LLVMSPIRVLib's ABI matches dep_llvm.
           llvm_major="$(llvm-config --version | cut -d. -f1)"
-          git clone --depth 1 -b "llvm_release_${llvm_major}0" \
+          git clone --filter=blob:none --no-checkout \
             https://github.com/KhronosGroup/SPIRV-LLVM-Translator.git "$RUNNER_TEMP/spirv-llvm-translator"
+          git -C "$RUNNER_TEMP/spirv-llvm-translator" checkout "llvm_release_${llvm_major}0"
           cmake -S "$RUNNER_TEMP/spirv-llvm-translator" -B "$RUNNER_TEMP/spirv-llvm-translator/build" \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="$prefix" \
