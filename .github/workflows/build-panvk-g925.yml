@@ -35,7 +35,7 @@ jobs:
           # not link LLVM.
           sudo apt-get install -y --no-install-recommends \
             llvm-dev libclang-dev libclang-cpp-dev clang cmake git \
-            zlib1g-dev libexpat1-dev
+            zlib1g-dev libexpat1-dev libdrm-dev
           python3 -m pip install --user --break-system-packages \
             'meson>=1.4' mako
 
@@ -161,28 +161,41 @@ jobs:
           unset PKG_CONFIG_LIBDIR || true
           export PKG_CONFIG_PATH="$RUNNER_TEMP/clc-deps/lib/pkgconfig:$RUNNER_TEMP/clc-deps/lib64/pkgconfig:$RUNNER_TEMP/clc-deps/share/pkgconfig"
           export CMAKE_PREFIX_PATH="$RUNNER_TEMP/clc-deps"
+          # Build the driver's internal generators for the host, exactly as a
+          # cross build expects: mesa_clc, vtn_bindgen2 and panfrost_compile.
+          # panfrost_compile needs panfrost enabled, so turn on the panfrost
+          # Vulkan driver here (we only compile the specific tool targets).
           meson setup build-native \
             --buildtype release \
             -Dplatforms= \
             -Dgallium-drivers= \
-            -Dvulkan-drivers= \
+            -Dvulkan-drivers=panfrost \
+            -Dpanfrost-kmds=kbase \
             -Dgallium-rusticl=false \
             -Dmesa-clc=enabled \
+            -Dprecomp-compiler=enabled \
             -Dspirv-tools=enabled \
             -Dinstall-mesa-clc=true \
+            -Dinstall-precomp-compiler=true \
             -Dbuild-tests=false \
             -Dglx=disabled \
             -Degl=disabled \
             -Dopengl=false \
             -Dgles1=disabled -Dgles2=disabled \
             -Dvalgrind=disabled -Dlibunwind=disabled -Dzstd=disabled
-          ninja -C build-native src/compiler/clc/mesa_clc src/compiler/spirv/vtn_bindgen2
-          tool_bin="$PWD/build-native/src/compiler/clc"
-          test -x "$tool_bin/mesa_clc" || { echo "mesa_clc not built" >&2; exit 1; }
-          test -x "$PWD/build-native/src/compiler/spirv/vtn_bindgen2" || { echo "vtn_bindgen2 not built" >&2; exit 1; }
-          echo "MESA_CLC_DIR=$tool_bin" >> "$GITHUB_ENV"
-          echo "$tool_bin" >> "$GITHUB_PATH"
+          ninja -C build-native \
+            src/compiler/clc/mesa_clc \
+            src/compiler/spirv/vtn_bindgen2 \
+            src/panfrost/clc/panfrost_compile
+          for t in \
+            "$PWD/build-native/src/compiler/clc/mesa_clc" \
+            "$PWD/build-native/src/compiler/spirv/vtn_bindgen2" \
+            "$PWD/build-native/src/panfrost/clc/panfrost_compile"; do
+            test -x "$t" || { echo "host tool not built: $t" >&2; exit 1; }
+          done
+          echo "$PWD/build-native/src/compiler/clc" >> "$GITHUB_PATH"
           echo "$PWD/build-native/src/compiler/spirv" >> "$GITHUB_PATH"
+          echo "$PWD/build-native/src/panfrost/clc" >> "$GITHUB_PATH"
 
       - name: Configure Mesa (cross, using host generators)
         run: |
@@ -207,6 +220,7 @@ jobs:
             -Dvideo-codecs= \
             -Dbuild-tests=false \
             -Dmesa-clc=system \
+            -Dprecomp-compiler=system \
             -Dllvm=disabled \
             -Dvalgrind=disabled \
             -Dlibunwind=disabled \
