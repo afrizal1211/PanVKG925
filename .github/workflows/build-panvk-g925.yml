@@ -34,8 +34,7 @@ jobs:
           # build. These run on the x86_64 runner only; the target driver does
           # not link LLVM.
           sudo apt-get install -y --no-install-recommends \
-            llvm-dev libclang-dev libclang-cpp-dev clang \
-            libspirv-tools-dev spirv-tools libllvmspirvlib-dev \
+            llvm-dev libclang-dev libclang-cpp-dev clang cmake git \
             zlib1g-dev libexpat1-dev
           python3 -m pip install --user --break-system-packages \
             'meson>=1.4' mako
@@ -94,32 +93,50 @@ jobs:
           echo "PKG_CONFIG_LIBDIR=$RUNNER_TEMP/libdrm-install/lib/pkgconfig" >> "$GITHUB_ENV"
           echo "PKG_CONFIG_PATH=$RUNNER_TEMP/libdrm-install/lib/pkgconfig" >> "$GITHUB_ENV"
 
-      - name: Build SPIRV-Tools for the host (>= 2024.1)
+      - name: Build host SPIRV-Tools (>= 2024.1) and SPIRV-LLVM-Translator
         run: |
           set -euo pipefail
-          # Ubuntu 24.04 ships SPIRV-Tools 2023.1, but Mesa's CLC requires
-          # >= 2024.1. Build a pinned release into a local prefix and expose it
-          # through PKG_CONFIG_PATH for the native (host) configure below.
-          sudo apt-get install -y --no-install-recommends cmake git
-          git clone --depth 1 -b "v2024.3" \
-            https://github.com/KhronosGroup/SPIRV-Tools.git "$RUNNER_TEMP/spirv-tools"
+          # Ubuntu 24.04 ships SPIRV-Tools 2023.1 (too old) and has no
+          # LLVMSPIRVLib package, both required by Mesa's CLC. Build pinned
+          # releases into a local prefix and expose it via PKG_CONFIG_PATH /
+          # CMAKE_PREFIX_PATH for the native (host) configure below.
+          prefix="$RUNNER_TEMP/clc-deps"
           git clone --depth 1 -b "v2024.3" \
             https://github.com/KhronosGroup/SPIRV-Headers.git "$RUNNER_TEMP/spirv-headers"
+
+          git clone --depth 1 -b "v2024.3" \
+            https://github.com/KhronosGroup/SPIRV-Tools.git "$RUNNER_TEMP/spirv-tools"
           cmake -S "$RUNNER_TEMP/spirv-tools" -B "$RUNNER_TEMP/spirv-tools/build" \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/spirv-tools-install" \
+            -DCMAKE_INSTALL_PREFIX="$prefix" \
             -DSPIRV-Headers_SOURCE_DIR="$RUNNER_TEMP/spirv-headers" \
             -DSPIRV_SKIP_TESTS=ON -DSPIRV_WERROR=OFF
           cmake --build "$RUNNER_TEMP/spirv-tools/build" -j"$(nproc)"
           cmake --install "$RUNNER_TEMP/spirv-tools/build"
-          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/spirv-tools-install/lib/pkgconfig:$PKG_CONFIG_PATH" >> "$GITHUB_ENV"
-          echo "CMAKE_PREFIX_PATH=$RUNNER_TEMP/spirv-tools-install" >> "$GITHUB_ENV"
+
+          # SPIRV-LLVM-Translator, pinned to the LLVM major shipped by Ubuntu
+          # 24.04 (18) so LLVMSPIRVLib's ABI matches dep_llvm.
+          llvm_major="$(llvm-config --version | cut -d. -f1)"
+          git clone --depth 1 -b "llvm_release_${llvm_major}0" \
+            https://github.com/KhronosGroup/SPIRV-LLVM-Translator.git "$RUNNER_TEMP/spirv-llvm-translator"
+          cmake -S "$RUNNER_TEMP/spirv-llvm-translator" -B "$RUNNER_TEMP/spirv-llvm-translator/build" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$prefix" \
+            -DLLVM_DIR="$(llvm-config --cmakedir)" \
+            -DSPIRV-Headers_SOURCE_DIR="$RUNNER_TEMP/spirv-headers" \
+            -DLLVM_SPIRV_BUILD_EXTERNAL=YES \
+            -DLLVM_INCLUDE_TESTS=OFF
+          cmake --build "$RUNNER_TEMP/spirv-llvm-translator/build" -j"$(nproc)"
+          cmake --install "$RUNNER_TEMP/spirv-llvm-translator/build"
+
+          echo "PKG_CONFIG_PATH=$prefix/lib/pkgconfig:$prefix/lib64/pkgconfig:$prefix/share/pkgconfig" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=$prefix" >> "$GITHUB_ENV"
 
       - name: Build host shader generators (mesa_clc, vtn_bindgen2)
         run: |
           set -euo pipefail
-          export PKG_CONFIG_PATH="$RUNNER_TEMP/spirv-tools-install/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-          export CMAKE_PREFIX_PATH="$RUNNER_TEMP/spirv-tools-install"
+          export PKG_CONFIG_PATH="$RUNNER_TEMP/clc-deps/lib/pkgconfig:$RUNNER_TEMP/clc-deps/lib64/pkgconfig:$RUNNER_TEMP/clc-deps/share/pkgconfig:${PKG_CONFIG_PATH:-}"
+          export CMAKE_PREFIX_PATH="$RUNNER_TEMP/clc-deps"
           meson setup build-native \
             --buildtype release \
             -Dplatforms= \
