@@ -1,0 +1,125 @@
+name: build-panvk-g925
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: aarch64-android-panvk-kbase
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    env:
+      NDK_VERSION: '27.0.12077973'
+      ANDROID_API: '34'
+      LIBDRM_VERSION: '2.4.123'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            meson ninja-build pkg-config python3-pip python3-mako \
+            python3-yaml python3-attr python3-setuptools gcc g++ \
+            glslang-tools
+          python3 -m pip install --user --break-system-packages \
+            'meson>=1.4' mako
+
+      - name: Install Android NDK r27
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/ndk.zip \
+            "https://dl.google.com/android/repository/android-ndk-r27-linux.zip"
+          unzip -q /tmp/ndk.zip -d "$RUNNER_TEMP"
+          echo "ANDROID_NDK_HOME=$RUNNER_TEMP/android-ndk-r27" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/android-ndk-r27/toolchain/bin" >> "$GITHUB_PATH"
+
+      - name: Build libdrm for Android aarch64
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/libdrm"
+          git clone --depth 1 -b "libdrm-${LIBDRM_VERSION}" \
+            https://gitlab.freedesktop.org/mesa/drm.git "$src" || \
+          git clone --depth 1 -b "libdrm-${LIBDRM_VERSION}" \
+            https://github.com/Distrotech/libdrm.git "$src"
+          cd "$src"
+          cat > ndk-aarch64.ini <<EOF
+          [binaries]
+          c = 'aarch64-linux-android${ANDROID_API}-clang'
+          ar = 'llvm-ar'
+          strip = 'llvm-strip'
+          [host_machine]
+          system = 'android'
+          cpu_family = 'aarch64'
+          cpu = 'aarch64'
+          endian = 'little'
+          EOF
+          meson setup build --cross-file ndk-aarch64.ini --prefix="$RUNNER_TEMP/libdrm-install" \
+            -Dintel=disabled -Dradeon=disabled -Damdgpu=disabled -Dnouveau=disabled \
+            -Dvmwgfx=disabled -Dfreedreno=disabled -Dvc4=disabled -Detnaviv=disabled \
+            -Dtests=false -Dman-pages=disabled
+          ninja -C build
+          ninja -C build install
+          echo "PKG_CONFIG_LIBDIR=$RUNNER_TEMP/libdrm-install/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/libdrm-install/lib/pkgconfig" >> "$GITHUB_ENV"
+
+      - name: Configure Mesa
+        run: |
+          set -euo pipefail
+          meson setup build-android-aarch64 \
+            --cross-file ci/android-aarch64.ini \
+            --buildtype release \
+            -Dplatforms=android \
+            -Dandroid-stub=true \
+            -Dgallium-drivers= \
+            -Dvulkan-drivers=panfrost \
+            -Dpanfrost-kmds=kbase \
+            -Dpanfrost-rust=false \
+            -Dglx=disabled \
+            -Degl=disabled \
+            -Dgallium-va=disabled \
+            -Dgallium-vdpau=disabled \
+            -Dgallium-xa=disabled \
+            -Dvideo-codecs= \
+            -Dbuild-tests=false \
+            -Dllvm=disabled \
+            -Dvalgrind=disabled \
+            -Dlibunwind=disabled \
+            -Dzstd=disabled
+
+      - name: Compile
+        run: ninja -C build-android-aarch64
+
+      - name: Collect artifacts
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          find build-android-aarch64 -name 'libvulkan_panfrost.so' \
+            -o -name 'libvulkan_panvk*.so' | while read -r so; do
+            cp "$so" out/
+          done
+          ls -l out || true
+          ( cd out && for f in *.so; do [ -e "$f" ] && sha256sum "$f"; done ) > out/SHA256SUMS || true
+
+      - name: Upload driver
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: panvk-g925-aarch64
+          path: out/
+          if-no-files-found: warn
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: meson-logs
+          path: build-android-aarch64/meson-logs/
+          if-no-files-found: ignore
