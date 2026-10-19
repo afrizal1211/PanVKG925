@@ -101,14 +101,22 @@ jobs:
           # releases into a local prefix and expose it via PKG_CONFIG_PATH /
           # CMAKE_PREFIX_PATH for the native (host) configure below.
           prefix="$RUNNER_TEMP/clc-deps"
-          # Clone without checkout so tags resolve, then pin the exact release.
-          git clone --filter=blob:none --no-checkout \
-            https://github.com/KhronosGroup/SPIRV-Headers.git "$RUNNER_TEMP/spirv-headers"
-          git -C "$RUNNER_TEMP/spirv-headers" checkout v2024.3
+          # SPIRV-Headers has no v2024.x tags; use the exact commit that
+          # SPIRV-Tools v2024.3 pins (from its DEPS file) so the two match.
+          mkdir -p "$RUNNER_TEMP/spirv-headers"
+          git -C "$RUNNER_TEMP/spirv-headers" init -q
+          git -C "$RUNNER_TEMP/spirv-headers" remote add origin \
+            https://github.com/KhronosGroup/SPIRV-Headers.git
+          git -C "$RUNNER_TEMP/spirv-headers" fetch -q --depth 1 origin \
+            2acb319af38d43be3ea76bfabf3998e5281d8d12
+          git -C "$RUNNER_TEMP/spirv-headers" checkout -q FETCH_HEAD
 
-          git clone --filter=blob:none --no-checkout \
-            https://github.com/KhronosGroup/SPIRV-Tools.git "$RUNNER_TEMP/spirv-tools"
-          git -C "$RUNNER_TEMP/spirv-tools" checkout v2024.3
+          mkdir -p "$RUNNER_TEMP/spirv-tools"
+          git -C "$RUNNER_TEMP/spirv-tools" init -q
+          git -C "$RUNNER_TEMP/spirv-tools" remote add origin \
+            https://github.com/KhronosGroup/SPIRV-Tools.git
+          git -C "$RUNNER_TEMP/spirv-tools" fetch -q --depth 1 origin tag v2024.3
+          git -C "$RUNNER_TEMP/spirv-tools" checkout -q FETCH_HEAD
           cmake -S "$RUNNER_TEMP/spirv-tools" -B "$RUNNER_TEMP/spirv-tools/build" \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="$prefix" \
@@ -120,9 +128,13 @@ jobs:
           # SPIRV-LLVM-Translator, pinned to the LLVM major shipped by Ubuntu
           # 24.04 (18) so LLVMSPIRVLib's ABI matches dep_llvm.
           llvm_major="$(llvm-config --version | cut -d. -f1)"
-          git clone --filter=blob:none --no-checkout \
-            https://github.com/KhronosGroup/SPIRV-LLVM-Translator.git "$RUNNER_TEMP/spirv-llvm-translator"
-          git -C "$RUNNER_TEMP/spirv-llvm-translator" checkout "llvm_release_${llvm_major}0"
+          mkdir -p "$RUNNER_TEMP/spirv-llvm-translator"
+          git -C "$RUNNER_TEMP/spirv-llvm-translator" init -q
+          git -C "$RUNNER_TEMP/spirv-llvm-translator" remote add origin \
+            https://github.com/KhronosGroup/SPIRV-LLVM-Translator.git
+          git -C "$RUNNER_TEMP/spirv-llvm-translator" fetch -q --depth 1 origin \
+            "llvm_release_${llvm_major}0"
+          git -C "$RUNNER_TEMP/spirv-llvm-translator" checkout -q FETCH_HEAD
           cmake -S "$RUNNER_TEMP/spirv-llvm-translator" -B "$RUNNER_TEMP/spirv-llvm-translator/build" \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="$prefix" \
