@@ -90,8 +90,11 @@ jobs:
             -Dtests=false -Dman-pages=disabled
           ninja -C build
           ninja -C build install
-          echo "PKG_CONFIG_LIBDIR=$RUNNER_TEMP/libdrm-install/lib/pkgconfig" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/libdrm-install/lib/pkgconfig" >> "$GITHUB_ENV"
+          # Do NOT export the Android libdrm pkg-config path globally: the
+          # native host tools (mesa_clc, vtn_bindgen2) must link the host
+          # libdrm, otherwise the x86-64 link fails on an aarch64 .so. Only
+          # the cross configure step below points at the Android libdrm.
+          echo "LIBDRM_ANDROID_PC=$RUNNER_TEMP/libdrm-install/lib/pkgconfig" >> "$GITHUB_ENV"
 
       - name: Build host SPIRV-Tools (>= 2024.1) and SPIRV-LLVM-Translator
         run: |
@@ -153,7 +156,10 @@ jobs:
       - name: Build host shader generators (mesa_clc, vtn_bindgen2)
         run: |
           set -euo pipefail
-          export PKG_CONFIG_PATH="$RUNNER_TEMP/clc-deps/lib/pkgconfig:$RUNNER_TEMP/clc-deps/lib64/pkgconfig:$RUNNER_TEMP/clc-deps/share/pkgconfig:${PKG_CONFIG_PATH:-}"
+          # Use only host pkg-config paths. In particular LIBDRM_ANDROID_PC must
+          # not leak in here or the native tools would link an aarch64 libdrm.
+          unset PKG_CONFIG_LIBDIR || true
+          export PKG_CONFIG_PATH="$RUNNER_TEMP/clc-deps/lib/pkgconfig:$RUNNER_TEMP/clc-deps/lib64/pkgconfig:$RUNNER_TEMP/clc-deps/share/pkgconfig"
           export CMAKE_PREFIX_PATH="$RUNNER_TEMP/clc-deps"
           meson setup build-native \
             --buildtype release \
@@ -181,6 +187,11 @@ jobs:
       - name: Configure Mesa (cross, using host generators)
         run: |
           set -euo pipefail
+          # The target libdrm lives in LIBDRM_ANDROID_PC; make it the only
+          # pkg-config source so the cross build resolves dep_libdrm to the
+          # Android aarch64 library.
+          export PKG_CONFIG_LIBDIR="$LIBDRM_ANDROID_PC"
+          export PKG_CONFIG_PATH="$LIBDRM_ANDROID_PC"
           meson setup build-android-aarch64 \
             --cross-file ci/android-aarch64.ini \
             --buildtype release \
