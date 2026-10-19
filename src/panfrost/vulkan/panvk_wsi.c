@@ -13,6 +13,7 @@
 
 #include "panvk_wsi.h"
 #include "panvk_instance.h"
+#include "panvk_kbase_device.h"
 #include "panvk_physical_device.h"
 
 #include "vk_util.h"
@@ -54,12 +55,13 @@ panvk_wsi_init(struct panvk_physical_device *physical_device)
                             panvk_wsi_proc_addr, &instance->vk.alloc, -1,
                             &instance->drirc.options,
                             &(struct wsi_device_options){
-                               /* Software presentation is opt-in via
-                                * PANVK_KBASE_WSI_SW.  PANVK_KBASE_WSI_NATIVE
-                                * selects the native X11/DRI3 path instead,
-                                * which relies on the dma-heap export path. */
+                               /* Software presentation is on by default in
+                                * this fork. PANVK_KBASE_WSI_NATIVE selects
+                                * the native X11/DRI3 path instead (relies on
+                                * the dma-heap export path); PANVK_KBASE_WSI_SW
+                                * is accepted for compatibility. */
                                .sw_device =
-                                  getenv("PANVK_KBASE_WSI_SW") != NULL &&
+                                  panvk_kbase_wsi_enabled() &&
                                   getenv("PANVK_KBASE_WSI_NATIVE") == NULL,
                             });
    if (result != VK_SUCCESS)

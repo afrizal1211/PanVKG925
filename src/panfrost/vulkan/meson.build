@@ -78,6 +78,12 @@ panvk_deps = []
 panvk_flags = []
 panvk_per_arch_libs = []
 
+if get_option('panvk-g925-experimental')
+  panvk_flags += '-DPANVK_G925_EXPERIMENTAL=1'
+else
+  panvk_flags += '-DPANVK_G925_EXPERIMENTAL=0'
+endif
+
 bifrost_archs = [6, 7]
 bifrost_inc_dir = ['bifrost']
 bifrost_files = [

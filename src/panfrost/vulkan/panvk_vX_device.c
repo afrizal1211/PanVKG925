@@ -14,6 +14,7 @@
 #if defined(HAVE_PAN_KMOD_KBASE)
 #include "kmod/kbase_csf.h"
 #include "kmod/kbase_kmod.h"
+#include "panvk_kbase_device.h"
 #include "panvk_kbase_sync.h"
 #endif
 #include "vk_cmd_enqueue_entrypoints.h"
@@ -514,11 +515,10 @@ panvk_per_arch(create_device)(struct panvk_physical_device *physical_device,
       &dispatch_table, &panvk_per_arch(device_entrypoints), PAN_ARCH > 9);
    vk_device_dispatch_table_from_entrypoints(&dispatch_table,
                                              &panvk_device_entrypoints, false);
-   /* Swapchain entry points are only registered when WSI is actually set up;
-    * for kbase that means the software presentation path. */
+   /* Swapchain entry points are registered whenever WSI is set up; for kbase
+    * that is on by default in this fork (software presentation path). */
    if (!panvk_physical_device_uses_kbase(physical_device) ||
-       getenv("PANVK_KBASE_WSI_SW") != NULL ||
-       getenv("PANVK_KBASE_WSI_NATIVE") != NULL)
+       panvk_kbase_wsi_enabled())
       vk_device_dispatch_table_from_entrypoints(&dispatch_table,
                                                 &wsi_device_entrypoints, false);
 #ifdef HAVE_PAN_KMOD_KBASE

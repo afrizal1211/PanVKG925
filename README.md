@@ -56,9 +56,18 @@ libdrm cross-build, Mesa configure + compile — and uploads
 
 ## Install (Winlator / Ludashi / DroidDeck)
 
-The released zip is an **Android Driver Package (ADPKG)** — the format that
-Winlator, Ludashi and the other libadrenotools-based loaders import. It contains,
-at the **zip root**:
+Two packages are published per release:
+
+| Package | Profile | Use when |
+|---|---|---|
+| `panvk-g925-aarch64-safe.zip` | `safe` | **Default.** Advertises the swapchain + structural extension set Winlator/Ludashi/DXVK need to create a device and present. |
+| `panvk-g925-aarch64-experimental.zip` | `experimental` | Also advertises hardware-candidate features (`multiview`, `descriptorIndexing`, `bufferDeviceAddress`, …) a specific game may demand. Not hardware-validated on every bin. |
+
+Both are **Android Driver Packages (ADPKG)** — the format Winlator, Ludashi and
+the other libadrenotools-based loaders import. The behavioural difference is
+compiled in via `-Dpanvk-g925-experimental=<bool>`; the `safe` build also
+defaults `PANVK_KBASE_DEVICE` to `/dev/mali0` and turns the software WSI path on,
+so no environment variables are required. Each zip contains, at the **zip root**:
 
 | File | Purpose |
 |---|---|
@@ -74,10 +83,14 @@ DroidDeck-style apps.
 
 To install in Winlator/Ludashi:
 
-1. Download `panvk-g925-aarch64.zip` from the latest release.
+1. Download `panvk-g925-aarch64-safe.zip` (or `-experimental`) from the latest release.
 2. Open the app → **Components** (or Settings) → **GPU driver** → **Import .zip**.
 3. Select the zip, then pick **PanVK G925 (Mali-G925-Immortalis MC11)** as the
    Vulkan driver for your container.
+
+If the app still closes immediately, get a logcat (`adb logcat`, or the in-app
+log) and look for the `vulkan` / `panvk` lines — the failing extension or feature
+call is usually named there.
 
 The driver talks to the vendor **`mali_kbase`** CSF kernel driver via `/dev/mali0`
 and needs **no DRM render node**, so it works on stock, non-root MT6991 devices.
@@ -85,7 +98,7 @@ and needs **no DRM render node**, so it works on stock, non-root MT6991 devices.
 Build a package locally from a compiled driver with:
 
 ```sh
-ci/package-winlator-driver.sh build-android-aarch64/src/vulkan/.../libvulkan_panfrost.so out
+ci/package-winlator-driver.sh build-android-safe/src/panfrost/vulkan/libvulkan_panfrost.so out safe
 ```
 
 ## Notes

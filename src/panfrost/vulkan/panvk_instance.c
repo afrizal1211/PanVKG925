@@ -88,11 +88,28 @@ panvk_debug_init(void)
    }
 }
 
+#ifdef HAVE_PAN_KMOD_KBASE
+/* This fork defaults to the vendor kbase node so the ICD works out of the box
+ * on Android devices (Winlator/Ludashi do not set PANVK_KBASE_DEVICE). Set
+ * PANVK_KBASE_DEVICE=/dev/maliN or PANVK_KBASE_DEVICE= to override. */
+static const char *
+panvk_kbase_device_option(void)
+{
+   const char *opt = os_get_option("PANVK_KBASE_DEVICE");
+   if (opt == NULL)
+      return "/dev/mali0";
+   /* An explicit empty value disables the kbase path (panthor/other backends). */
+   if (!*opt)
+      return NULL;
+   return opt;
+}
+#endif
+
 VKAPI_ATTR VkResult VKAPI_CALL
 panvk_EnumerateInstanceVersion(uint32_t *pApiVersion)
 {
 #ifdef HAVE_PAN_KMOD_KBASE
-   if (os_get_option("PANVK_KBASE_DEVICE")) {
+   if (panvk_kbase_device_option()) {
       const char *experiment = getenv("PANVK_KBASE_EXPERIMENT");
       bool rollback_1_0 = false;
       bool rollback_1_1 = false;
@@ -320,7 +337,7 @@ panvk_CreateInstance(const VkInstanceCreateInfo *pCreateInfo,
    const struct vk_instance_extension_table *extensions = &panvk_instance_extensions;
 #ifdef HAVE_PAN_KMOD_KBASE
    instance->kbase.selection = panvk_kbase_select_device(
-      os_get_option("PANVK_KBASE_DEVICE"),
+      panvk_kbase_device_option(),
       os_get_option("PAN_KMOD_RESTRICT_TO_BACKENDS"), instance->kbase.path);
    if (instance->kbase.selection == PANVK_KBASE_SELECTION_INVALID) {
       vk_free(pAllocator, instance);
@@ -400,7 +417,7 @@ panvk_EnumerateInstanceExtensionProperties(const char *pLayerName,
       return panvk_error(NULL, VK_ERROR_LAYER_NOT_PRESENT);
 
 #ifdef HAVE_PAN_KMOD_KBASE
-   if (os_get_option("PANVK_KBASE_DEVICE")) {
+   if (panvk_kbase_device_option()) {
       return vk_enumerate_instance_extension_properties(
          &panvk_kbase_instance_extensions, pPropertyCount, pProperties);
    }

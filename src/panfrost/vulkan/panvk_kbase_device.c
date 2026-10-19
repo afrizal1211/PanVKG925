@@ -12,9 +12,67 @@
 #include <string.h>
 #include <unistd.h>
 
+/* The G925 fork ships two capability profiles built from the same tree:
+ *
+ *   PANVK_G925_EXPERIMENTAL == 0  ("safe")
+ *     Advertises the extensions/features that are structurally required for a
+ *     Vulkan device to be usable by Winlator/Ludashi/DXVK (promoted-core
+ *     aliases, memory-requirement/bind helpers, format lists, driver
+ *     properties, software WSI). Hardware behaviour is not over-claimed.
+ *
+ *   PANVK_G925_EXPERIMENTAL == 1  ("experimental")
+ *     Additionally enables the hardware-candidate features that DXVK asks for
+ *     but which the upstream fork leaves behind the experiment switch
+ *     (multiview, descriptorIndexing, bufferDeviceAddress, ...). These are not
+ *     hardware-validated on every G925 bin, so keep this variant opt-in.
+ *
+ * Either profile can still be overridden at runtime with
+ * PANVK_KBASE_EXPERIMENT=<comma list>, exactly like upstream.
+ */
+#ifndef PANVK_G925_EXPERIMENTAL
+#define PANVK_G925_EXPERIMENTAL 0
+#endif
+
+/* Items that are safe/structural enough to enable in both profiles. */
+static bool
+kbase_always(const char *name)
+{
+   static const char *const always[] = {
+      "VK_KHR_driver_properties",
+      "VK_KHR_get_memory_requirements2",
+      "VK_KHR_bind_memory2",
+      "VK_KHR_dedicated_allocation",
+      "VK_KHR_maintenance1",
+      "VK_KHR_maintenance2",
+      "VK_KHR_image_format_list",
+      "VK_KHR_format_feature_flags2",
+      "VK_KHR_spirv_1_4",
+      "VK_KHR_shader_non_semantic_info",
+      "VK_KHR_relaxed_block_layout",
+      "VK_KHR_storage_buffer_storage_class",
+      "VK_EXT_private_data",
+      "VK_EXT_debug_marker",
+      "VK_EXT_tooling_info",
+      NULL,
+   };
+   for (size_t i = 0; always[i]; i++)
+      if (!strcmp(always[i], name))
+         return true;
+   return false;
+}
+
 static bool
 kbase_experiment(const char *name)
 {
+   if (kbase_always(name))
+      return true;
+
+#if PANVK_G925_EXPERIMENTAL
+   /* Hardware-candidate features enabled by the experimental profile so DXVK
+    * gets the feature set it probes for. Runtime PANVK_KBASE_EXPERIMENT still
+    * applies on top. */
+   return true;
+#else
    const char *env = getenv("PANVK_KBASE_EXPERIMENT");
    if (!env || !*env)
       return false;
@@ -30,6 +88,17 @@ kbase_experiment(const char *name)
       p = end + 1;
    }
    return false;
+#endif
+}
+
+bool
+panvk_kbase_wsi_enabled(void)
+{
+   /* Enabled by default in this fork so Winlator/Ludashi/DXVK can present.
+    * Explicitly opt out with PANVK_KBASE_WSI_DISABLE=1. */
+   if (getenv("PANVK_KBASE_WSI_DISABLE") != NULL)
+      return false;
+   return true;
 }
 
 static bool
@@ -118,11 +187,9 @@ panvk_kbase_physical_device_capabilities(struct vk_device_extension_table *exten
       extensions->KHR_external_memory = true;
       extensions->KHR_external_memory_fd = true;
       extensions->EXT_external_memory_dma_buf = true;
-      /* Only the swapchain extension WSI actually needs, and only while the
-       * software presentation path is being verified: kbase cannot export
-       * dma-buf, so a real swapchain is out of reach for now. */
-      if (getenv("PANVK_KBASE_WSI_SW") != NULL ||
-          getenv("PANVK_KBASE_WSI_NATIVE") != NULL)
+      /* kbase cannot export dma-buf, so presentation uses the software WSI
+       * path. It is on by default here so Windows apps get a swapchain. */
+      if (panvk_kbase_wsi_enabled())
          extensions->KHR_swapchain = true;
 
       /* Verification-only candidates. Never set PANVK_KBASE_EXPERIMENT in a

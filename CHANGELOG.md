@@ -4,6 +4,55 @@ All notable changes to the PanVKG925 driver fork are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0-alpha.2] - 2026-10-19
+
+Fix the Winlator/Ludashi force-close by shipping **two capability profiles**,
+and start advertising the Vulkan extensions/features a Vulkan device needs to be
+usable at all.
+
+### Why alpha.1 force-closed
+
+The kbase backend hid almost every extension and feature behind environment
+variables that Winlator/Ludashi never set. With no `PANVK_KBASE_DEVICE`,
+`PANVK_KBASE_EXPERIMENT` or `PANVK_KBASE_WSI_*`, the driver:
+
+- did not advertise `VK_KHR_swapchain`, so `vkCreateSwapchainKHR` was NULL;
+- did not advertise `VK_KHR_get_memory_requirements2`, `VK_KHR_bind_memory2`
+  or `VK_KHR_dedicated_allocation`, which DXVK requires during
+  `vkCreateDevice`;
+- reported API 1.0 and a device missing `multiview`, `shaderDrawParameters`,
+  `fragmentStoresAndAtomics`, etc.
+
+The loader then failed the device-creation/present path and the app aborted.
+
+### Added
+
+- **Two build profiles** selected by the new Meson option
+  `-Dpanvk-g925-experimental=<bool>` (baked in as `-DPANVK_G925_EXPERIMENTAL`):
+  - `safe` (`false`): always advertises the structural set — the promoted-core
+    extensions (memory requirements, bind, dedicated allocation, maintenance
+    1/2, image format list, format feature flags 2, SPIR-V 1.4, private data),
+    `VK_KHR_driver_properties`, and the software-WSI `VK_KHR_swapchain` path.
+  - `experimental` (`true`): additionally enables the hardware-candidate
+    features DXVK probes for (`multiview`, `variablePointers`,
+    `samplerYcbcrConversion`, `shaderDrawParameters`,
+    `fragmentStoresAndAtomics`, `descriptorIndexing`, `bufferDeviceAddress`,
+    ...). Not hardware-validated on every G925 bin — opt-in only.
+- **Software WSI on by default** in both profiles (`panvk_kbase_wsi_enabled()`),
+  so a swapchain exists without env vars. Opt out with
+  `PANVK_KBASE_WSI_DISABLE=1`; `PANVK_KBASE_WSI_NATIVE=1` still selects the
+  native X11/DRI3 path.
+- **`PANVK_KBASE_DEVICE` defaults to `/dev/mali0`**, so the kbase ICD enumerates
+  out of the box. Set it to another node or to an empty value to override.
+- CI now builds **both** profiles and packages
+  `panvk-g925-aarch64-safe.zip` and `panvk-g925-aarch64-experimental.zip`.
+- `ci/panvk-g925-winlator-caps.patch` captures the capability/WSI changes.
+
+### Changed
+
+- `ci/package-winlator-driver.sh` takes a `safe|experimental` argument and
+  writes variant-aware `meta.json` (`variant`, `experimentalFeatures`).
+
 ## [0.1.0-alpha.1] - 2026-10-19
 
 First packaged release: a reproducible, CI-built **PanVK kbase** Vulkan ICD for

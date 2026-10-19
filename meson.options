@@ -229,6 +229,15 @@ option(
 )
 
 option(
+  'panvk-g925-experimental',
+  type : 'boolean',
+  value : false,
+  description : 'G925 kbase fork: also advertise unverified hardware-candidate ' +
+                'Vulkan features (multiview, descriptorIndexing, ' +
+                'bufferDeviceAddress, ...) on top of the safe structural set',
+)
+
+option(
   'panfrost-virtio',
   type : 'boolean',
   value : false,
