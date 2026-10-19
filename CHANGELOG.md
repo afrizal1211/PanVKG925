@@ -4,6 +4,40 @@ All notable changes to the PanVKG925 driver fork are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0-alpha.3] - 2026-10-20
+
+Fix a **self-contradictory experimental build** that could wedge DXVK.
+
+### Why
+
+The `experimental` profile is built with `PANVK_G925_EXPERIMENTAL=1`, which
+`kbase_experiment()` implemented as "return true for every name". But that switch
+is also used for the **rollback controls** `apiVersion1.0` / `apiVersion1.1`.
+Force-enabling those told the backend to pretend it was Vulkan **1.0**:
+
+- `rollback_1_0 = true` → `apiVersion = VK_API_VERSION_1_0`, promoted-core
+  extensions and 16-bit access forced off;
+- yet the same build still returned true for `multiview`,
+  `fragmentStoresAndAtomics`, etc.
+
+The result advertised API 1.0 while claiming 1.1+ features — a state DXVK does
+not handle, and a plausible cause of the reported hang after device creation
+(a real-device log showed swapchain creation succeeding, then Wine D3D9 threads
+blocking for 60 s).
+
+### Fixed
+
+- `kbase_experiment()` now resolves the rollback controls `apiVersion1.0` and
+  `apiVersion1.1` to **false in every profile**; they only turn on via an
+  explicit `PANVK_KBASE_EXPERIMENT`. `apiVersion1.2` remains a positive selector
+  so the experimental profile lands on API 1.2 as intended.
+
+Observed on the experimental profile against the real device: alpha.2 already
+fixed the force-close — the driver loads, creates a device on
+`Mali-G925-Immortalis MC11` (8135 MiB heap), advertises `VK_KHR_swapchain`, and
+DXVK builds 800x600 and 1280x720 swapchains. The remaining issue is a later
+D3D9/DXVK pipeline/present stall, which this release makes coherent to retest.
+
 ## [0.1.0-alpha.2] - 2026-10-19
 
 Fix the Winlator/Ludashi force-close by shipping **two capability profiles**,

@@ -16,7 +16,7 @@ jobs:
       NDK_VERSION: '27.0.12077973'
       ANDROID_API: '34'
       LIBDRM_VERSION: '2.4.123'
-      G925_DRIVER_VERSION: 'PanVK G925 0.1.0-alpha.2'
+      G925_DRIVER_VERSION: 'PanVK G925 0.1.0-alpha.3'
 
     steps:
       - name: Checkout

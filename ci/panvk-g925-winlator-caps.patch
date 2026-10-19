@@ -1,145 +1,25 @@
-diff --git a/meson.options b/meson.options
-index 0204781..76c82e8 100644
---- a/meson.options
-+++ b/meson.options
-@@ -228,6 +228,15 @@ option(
-   description : 'List of Panfrost kernel-mode drivers to enable',
- )
- 
-+option(
-+  'panvk-g925-experimental',
-+  type : 'boolean',
-+  value : false,
-+  description : 'G925 kbase fork: also advertise unverified hardware-candidate ' +
-+                'Vulkan features (multiview, descriptorIndexing, ' +
-+                'bufferDeviceAddress, ...) on top of the safe structural set',
-+)
-+
- option(
-   'panfrost-virtio',
-   type : 'boolean',
-diff --git a/src/panfrost/vulkan/meson.build b/src/panfrost/vulkan/meson.build
-index acb5849..5ee403a 100644
---- a/src/panfrost/vulkan/meson.build
-+++ b/src/panfrost/vulkan/meson.build
-@@ -78,6 +78,12 @@ panvk_deps = []
- panvk_flags = []
- panvk_per_arch_libs = []
- 
-+if get_option('panvk-g925-experimental')
-+  panvk_flags += '-DPANVK_G925_EXPERIMENTAL=1'
-+else
-+  panvk_flags += '-DPANVK_G925_EXPERIMENTAL=0'
-+endif
-+
- bifrost_archs = [6, 7]
- bifrost_inc_dir = ['bifrost']
- bifrost_files = [
-diff --git a/src/panfrost/vulkan/panvk_instance.c b/src/panfrost/vulkan/panvk_instance.c
-index 4babc83..795cdd4 100644
---- a/src/panfrost/vulkan/panvk_instance.c
-+++ b/src/panfrost/vulkan/panvk_instance.c
-@@ -88,11 +88,28 @@ panvk_debug_init(void)
-    }
- }
- 
-+#ifdef HAVE_PAN_KMOD_KBASE
-+/* This fork defaults to the vendor kbase node so the ICD works out of the box
-+ * on Android devices (Winlator/Ludashi do not set PANVK_KBASE_DEVICE). Set
-+ * PANVK_KBASE_DEVICE=/dev/maliN or PANVK_KBASE_DEVICE= to override. */
-+static const char *
-+panvk_kbase_device_option(void)
-+{
-+   const char *opt = os_get_option("PANVK_KBASE_DEVICE");
-+   if (opt == NULL)
-+      return "/dev/mali0";
-+   /* An explicit empty value disables the kbase path (panthor/other backends). */
-+   if (!*opt)
-+      return NULL;
-+   return opt;
-+}
-+#endif
-+
- VKAPI_ATTR VkResult VKAPI_CALL
- panvk_EnumerateInstanceVersion(uint32_t *pApiVersion)
- {
- #ifdef HAVE_PAN_KMOD_KBASE
--   if (os_get_option("PANVK_KBASE_DEVICE")) {
-+   if (panvk_kbase_device_option()) {
-       const char *experiment = getenv("PANVK_KBASE_EXPERIMENT");
-       bool rollback_1_0 = false;
-       bool rollback_1_1 = false;
-@@ -320,7 +337,7 @@ panvk_CreateInstance(const VkInstanceCreateInfo *pCreateInfo,
-    const struct vk_instance_extension_table *extensions = &panvk_instance_extensions;
- #ifdef HAVE_PAN_KMOD_KBASE
-    instance->kbase.selection = panvk_kbase_select_device(
--      os_get_option("PANVK_KBASE_DEVICE"),
-+      panvk_kbase_device_option(),
-       os_get_option("PAN_KMOD_RESTRICT_TO_BACKENDS"), instance->kbase.path);
-    if (instance->kbase.selection == PANVK_KBASE_SELECTION_INVALID) {
-       vk_free(pAllocator, instance);
-@@ -400,7 +417,7 @@ panvk_EnumerateInstanceExtensionProperties(const char *pLayerName,
-       return panvk_error(NULL, VK_ERROR_LAYER_NOT_PRESENT);
- 
- #ifdef HAVE_PAN_KMOD_KBASE
--   if (os_get_option("PANVK_KBASE_DEVICE")) {
-+   if (panvk_kbase_device_option()) {
-       return vk_enumerate_instance_extension_properties(
-          &panvk_kbase_instance_extensions, pPropertyCount, pProperties);
-    }
 diff --git a/src/panfrost/vulkan/panvk_kbase_device.c b/src/panfrost/vulkan/panvk_kbase_device.c
-index be55ee7..af3f257 100644
+index af3f257..b476886 100644
 --- a/src/panfrost/vulkan/panvk_kbase_device.c
 +++ b/src/panfrost/vulkan/panvk_kbase_device.c
-@@ -12,9 +12,67 @@
- #include <string.h>
- #include <unistd.h>
+@@ -61,12 +61,48 @@ kbase_always(const char *name)
+    return false;
+ }
  
-+/* The G925 fork ships two capability profiles built from the same tree:
-+ *
-+ *   PANVK_G925_EXPERIMENTAL == 0  ("safe")
-+ *     Advertises the extensions/features that are structurally required for a
-+ *     Vulkan device to be usable by Winlator/Ludashi/DXVK (promoted-core
-+ *     aliases, memory-requirement/bind helpers, format lists, driver
-+ *     properties, software WSI). Hardware behaviour is not over-claimed.
-+ *
-+ *   PANVK_G925_EXPERIMENTAL == 1  ("experimental")
-+ *     Additionally enables the hardware-candidate features that DXVK asks for
-+ *     but which the upstream fork leaves behind the experiment switch
-+ *     (multiview, descriptorIndexing, bufferDeviceAddress, ...). These are not
-+ *     hardware-validated on every G925 bin, so keep this variant opt-in.
-+ *
-+ * Either profile can still be overridden at runtime with
-+ * PANVK_KBASE_EXPERIMENT=<comma list>, exactly like upstream.
-+ */
-+#ifndef PANVK_G925_EXPERIMENTAL
-+#define PANVK_G925_EXPERIMENTAL 0
-+#endif
-+
-+/* Items that are safe/structural enough to enable in both profiles. */
++/* Control/rollback switches. These do not "enable a feature"; they select the
++ * API version and gate the promoted-core set. Force-enabling them would wrongly
++ * downgrade the device, so they must resolve to false in every profile and can
++ * only be turned on explicitly via PANVK_KBASE_EXPERIMENT. */
 +static bool
-+kbase_always(const char *name)
++kbase_is_control(const char *name)
 +{
-+   static const char *const always[] = {
-+      "VK_KHR_driver_properties",
-+      "VK_KHR_get_memory_requirements2",
-+      "VK_KHR_bind_memory2",
-+      "VK_KHR_dedicated_allocation",
-+      "VK_KHR_maintenance1",
-+      "VK_KHR_maintenance2",
-+      "VK_KHR_image_format_list",
-+      "VK_KHR_format_feature_flags2",
-+      "VK_KHR_spirv_1_4",
-+      "VK_KHR_shader_non_semantic_info",
-+      "VK_KHR_relaxed_block_layout",
-+      "VK_KHR_storage_buffer_storage_class",
-+      "VK_EXT_private_data",
-+      "VK_EXT_debug_marker",
-+      "VK_EXT_tooling_info",
++   static const char *const controls[] = {
++      "apiVersion1.0",
++      "apiVersion1.1",
 +      NULL,
 +   };
-+   for (size_t i = 0; always[i]; i++)
-+      if (!strcmp(always[i], name))
++   for (size_t i = 0; controls[i]; i++)
++      if (!strcmp(controls[i], name))
 +         return true;
 +   return false;
 +}
@@ -147,155 +27,27 @@ index be55ee7..af3f257 100644
  static bool
  kbase_experiment(const char *name)
  {
-+   if (kbase_always(name))
-+      return true;
-+
-+#if PANVK_G925_EXPERIMENTAL
-+   /* Hardware-candidate features enabled by the experimental profile so DXVK
-+    * gets the feature set it probes for. Runtime PANVK_KBASE_EXPERIMENT still
-+    * applies on top. */
-+   return true;
-+#else
-    const char *env = getenv("PANVK_KBASE_EXPERIMENT");
-    if (!env || !*env)
-       return false;
-@@ -30,6 +88,17 @@ kbase_experiment(const char *name)
-       p = end + 1;
-    }
-    return false;
-+#endif
-+}
-+
-+bool
-+panvk_kbase_wsi_enabled(void)
-+{
-+   /* Enabled by default in this fork so Winlator/Ludashi/DXVK can present.
-+    * Explicitly opt out with PANVK_KBASE_WSI_DISABLE=1. */
-+   if (getenv("PANVK_KBASE_WSI_DISABLE") != NULL)
+    if (kbase_always(name))
+       return true;
+ 
++   /* Never blanket-enable the rollback controls in the experimental profile. */
++   if (kbase_is_control(name)) {
++      const char *env = getenv("PANVK_KBASE_EXPERIMENT");
++      if (!env || !*env)
++         return false;
++      const size_t name_len = strlen(name);
++      for (const char *p = env; *p;) {
++         const char *end = strchr(p, ',');
++         const size_t len = end ? (size_t)(end - p) : strlen(p);
++         if (len == name_len && !memcmp(p, name, len))
++            return true;
++         if (!end)
++            break;
++         p = end + 1;
++      }
 +      return false;
-+   return true;
- }
- 
- static bool
-@@ -118,11 +187,9 @@ panvk_kbase_physical_device_capabilities(struct vk_device_extension_table *exten
-       extensions->KHR_external_memory = true;
-       extensions->KHR_external_memory_fd = true;
-       extensions->EXT_external_memory_dma_buf = true;
--      /* Only the swapchain extension WSI actually needs, and only while the
--       * software presentation path is being verified: kbase cannot export
--       * dma-buf, so a real swapchain is out of reach for now. */
--      if (getenv("PANVK_KBASE_WSI_SW") != NULL ||
--          getenv("PANVK_KBASE_WSI_NATIVE") != NULL)
-+      /* kbase cannot export dma-buf, so presentation uses the software WSI
-+       * path. It is on by default here so Windows apps get a swapchain. */
-+      if (panvk_kbase_wsi_enabled())
-          extensions->KHR_swapchain = true;
- 
-       /* Verification-only candidates. Never set PANVK_KBASE_EXPERIMENT in a
-diff --git a/src/panfrost/vulkan/panvk_kbase_device.h b/src/panfrost/vulkan/panvk_kbase_device.h
-index ad2080c..c715cc5 100644
---- a/src/panfrost/vulkan/panvk_kbase_device.h
-+++ b/src/panfrost/vulkan/panvk_kbase_device.h
-@@ -20,6 +20,11 @@ enum panvk_kbase_selection {
-    PANVK_KBASE_SELECTION_INVALID,
- };
- 
-+/* True when the kbase software/native WSI path should be enabled. The G925
-+ * build turns this on by default so Windows apps get a swapchain; set
-+ * PANVK_KBASE_WSI_DISABLE=1 at runtime to force it off. */
-+bool panvk_kbase_wsi_enabled(void);
++   }
 +
- enum panvk_kbase_selection panvk_kbase_select_device(
-    const char *path, const char *restriction, char selected[PANVK_KBASE_PATH_SIZE]);
- VkResult panvk_kbase_open_device(const char *path,
-diff --git a/src/panfrost/vulkan/panvk_physical_device.c b/src/panfrost/vulkan/panvk_physical_device.c
-index 9695a6e..2d19295 100644
---- a/src/panfrost/vulkan/panvk_physical_device.c
-+++ b/src/panfrost/vulkan/panvk_physical_device.c
-@@ -490,10 +490,10 @@ physical_device_init(struct panvk_physical_device *device,
-    vk_physical_device_dispatch_table_from_entrypoints(
-       &dispatch_table, &panvk_physical_device_entrypoints, true);
-    /* The physical-device WSI entry points are needed whenever a surface can
--    * exist at all, which for kbase means the software presentation path. */
-+    * exist at all; for kbase the software presentation path is on by default
-+    * in this fork. */
-    if (!panvk_physical_device_uses_kbase(device) ||
--       getenv("PANVK_KBASE_WSI_SW") != NULL ||
--       getenv("PANVK_KBASE_WSI_NATIVE") != NULL)
-+       panvk_kbase_wsi_enabled())
-       vk_physical_device_dispatch_table_from_entrypoints(
-          &dispatch_table, &wsi_physical_device_entrypoints, false);
- 
-@@ -514,11 +514,10 @@ physical_device_init(struct panvk_physical_device *device,
-    device->vk.supported_sync_types = device->sync_types;
- 
-    /* WSI is normally skipped for kbase because it has no dma-buf exporter.
--    * With the software presentation path enabled it can still work, so allow
--    * opting in while the path is being verified. */
-+    * This fork enables the software presentation path by default so Windows
-+    * apps get a working swapchain. */
-    if (!panvk_physical_device_uses_kbase(device) ||
--       getenv("PANVK_KBASE_WSI_SW") != NULL ||
--       getenv("PANVK_KBASE_WSI_NATIVE") != NULL) {
-+       panvk_kbase_wsi_enabled()) {
-       result = panvk_wsi_init(device);
-       if (result != VK_SUCCESS)
-          goto fail;
-diff --git a/src/panfrost/vulkan/panvk_vX_device.c b/src/panfrost/vulkan/panvk_vX_device.c
-index 2f84ea3..cb18f67 100644
---- a/src/panfrost/vulkan/panvk_vX_device.c
-+++ b/src/panfrost/vulkan/panvk_vX_device.c
-@@ -14,6 +14,7 @@
- #if defined(HAVE_PAN_KMOD_KBASE)
- #include "kmod/kbase_csf.h"
- #include "kmod/kbase_kmod.h"
-+#include "panvk_kbase_device.h"
- #include "panvk_kbase_sync.h"
- #endif
- #include "vk_cmd_enqueue_entrypoints.h"
-@@ -514,11 +515,10 @@ panvk_per_arch(create_device)(struct panvk_physical_device *physical_device,
-       &dispatch_table, &panvk_per_arch(device_entrypoints), PAN_ARCH > 9);
-    vk_device_dispatch_table_from_entrypoints(&dispatch_table,
-                                              &panvk_device_entrypoints, false);
--   /* Swapchain entry points are only registered when WSI is actually set up;
--    * for kbase that means the software presentation path. */
-+   /* Swapchain entry points are registered whenever WSI is set up; for kbase
-+    * that is on by default in this fork (software presentation path). */
-    if (!panvk_physical_device_uses_kbase(physical_device) ||
--       getenv("PANVK_KBASE_WSI_SW") != NULL ||
--       getenv("PANVK_KBASE_WSI_NATIVE") != NULL)
-+       panvk_kbase_wsi_enabled())
-       vk_device_dispatch_table_from_entrypoints(&dispatch_table,
-                                                 &wsi_device_entrypoints, false);
- #ifdef HAVE_PAN_KMOD_KBASE
-diff --git a/src/panfrost/vulkan/panvk_wsi.c b/src/panfrost/vulkan/panvk_wsi.c
-index bfea093..c9f6fc5 100644
---- a/src/panfrost/vulkan/panvk_wsi.c
-+++ b/src/panfrost/vulkan/panvk_wsi.c
-@@ -13,6 +13,7 @@
- 
- #include "panvk_wsi.h"
- #include "panvk_instance.h"
-+#include "panvk_kbase_device.h"
- #include "panvk_physical_device.h"
- 
- #include "vk_util.h"
-@@ -54,12 +55,13 @@ panvk_wsi_init(struct panvk_physical_device *physical_device)
-                             panvk_wsi_proc_addr, &instance->vk.alloc, -1,
-                             &instance->drirc.options,
-                             &(struct wsi_device_options){
--                               /* Software presentation is opt-in via
--                                * PANVK_KBASE_WSI_SW.  PANVK_KBASE_WSI_NATIVE
--                                * selects the native X11/DRI3 path instead,
--                                * which relies on the dma-heap export path. */
-+                               /* Software presentation is on by default in
-+                                * this fork. PANVK_KBASE_WSI_NATIVE selects
-+                                * the native X11/DRI3 path instead (relies on
-+                                * the dma-heap export path); PANVK_KBASE_WSI_SW
-+                                * is accepted for compatibility. */
-                                .sw_device =
--                                  getenv("PANVK_KBASE_WSI_SW") != NULL &&
-+                                  panvk_kbase_wsi_enabled() &&
-                                   getenv("PANVK_KBASE_WSI_NATIVE") == NULL,
-                             });
-    if (result != VK_SUCCESS)
+ #if PANVK_G925_EXPERIMENTAL
+    /* Hardware-candidate features enabled by the experimental profile so DXVK
+     * gets the feature set it probes for. Runtime PANVK_KBASE_EXPERIMENT still

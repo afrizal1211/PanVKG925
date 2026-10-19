@@ -61,11 +61,47 @@ kbase_always(const char *name)
    return false;
 }
 
+/* Control/rollback switches. These do not "enable a feature"; they select the
+ * API version and gate the promoted-core set. Force-enabling them would wrongly
+ * downgrade the device, so they must resolve to false in every profile and can
+ * only be turned on explicitly via PANVK_KBASE_EXPERIMENT. */
+static bool
+kbase_is_control(const char *name)
+{
+   static const char *const controls[] = {
+      "apiVersion1.0",
+      "apiVersion1.1",
+      NULL,
+   };
+   for (size_t i = 0; controls[i]; i++)
+      if (!strcmp(controls[i], name))
+         return true;
+   return false;
+}
+
 static bool
 kbase_experiment(const char *name)
 {
    if (kbase_always(name))
       return true;
+
+   /* Never blanket-enable the rollback controls in the experimental profile. */
+   if (kbase_is_control(name)) {
+      const char *env = getenv("PANVK_KBASE_EXPERIMENT");
+      if (!env || !*env)
+         return false;
+      const size_t name_len = strlen(name);
+      for (const char *p = env; *p;) {
+         const char *end = strchr(p, ',');
+         const size_t len = end ? (size_t)(end - p) : strlen(p);
+         if (len == name_len && !memcmp(p, name, len))
+            return true;
+         if (!end)
+            break;
+         p = end + 1;
+      }
+      return false;
+   }
 
 #if PANVK_G925_EXPERIMENTAL
    /* Hardware-candidate features enabled by the experimental profile so DXVK
