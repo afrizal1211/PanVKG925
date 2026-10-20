@@ -18,13 +18,16 @@
  *     Advertises the extensions/features that are structurally required for a
  *     Vulkan device to be usable by Winlator/Ludashi/DXVK (promoted-core
  *     aliases, memory-requirement/bind helpers, format lists, driver
- *     properties, software WSI). Hardware behaviour is not over-claimed.
+ *     properties, dma-buf/native WSI). Hardware behaviour is not over-claimed.
  *
  *   PANVK_G925_EXPERIMENTAL == 1  ("experimental")
  *     Additionally enables the hardware-candidate features that DXVK asks for
  *     but which the upstream fork leaves behind the experiment switch
- *     (multiview, descriptorIndexing, bufferDeviceAddress, ...). These are not
- *     hardware-validated on every G925 bin, so keep this variant opt-in.
+ *     (multiview, variablePointers, shaderDrawParameters,
+ *     fragmentStoresAndAtomics, apiVersion1.2, ...). descriptorIndexing,
+ *     bufferDeviceAddress and timelineSemaphore stay off: kbase sync has no
+ *     timeline support and those paths are not validated. Keep this variant
+ *     opt-in.
  *
  * Either profile can still be overridden at runtime with
  * PANVK_KBASE_EXPERIMENT=<comma list>, exactly like upstream.
@@ -79,37 +82,10 @@ kbase_is_control(const char *name)
    return false;
 }
 
+/* True when `name` appears as a comma-separated item of `env`. */
 static bool
-kbase_experiment(const char *name)
+kbase_list_contains(const char *env, const char *name)
 {
-   if (kbase_always(name))
-      return true;
-
-   /* Never blanket-enable the rollback controls in the experimental profile. */
-   if (kbase_is_control(name)) {
-      const char *env = getenv("PANVK_KBASE_EXPERIMENT");
-      if (!env || !*env)
-         return false;
-      const size_t name_len = strlen(name);
-      for (const char *p = env; *p;) {
-         const char *end = strchr(p, ',');
-         const size_t len = end ? (size_t)(end - p) : strlen(p);
-         if (len == name_len && !memcmp(p, name, len))
-            return true;
-         if (!end)
-            break;
-         p = end + 1;
-      }
-      return false;
-   }
-
-#if PANVK_G925_EXPERIMENTAL
-   /* Hardware-candidate features enabled by the experimental profile so DXVK
-    * gets the feature set it probes for. Runtime PANVK_KBASE_EXPERIMENT still
-    * applies on top. */
-   return true;
-#else
-   const char *env = getenv("PANVK_KBASE_EXPERIMENT");
    if (!env || !*env)
       return false;
 
@@ -124,6 +100,25 @@ kbase_experiment(const char *name)
       p = end + 1;
    }
    return false;
+}
+
+static bool
+kbase_experiment(const char *name)
+{
+   if (kbase_always(name))
+      return true;
+
+   /* Never blanket-enable the rollback controls in the experimental profile. */
+   if (kbase_is_control(name))
+      return kbase_list_contains(getenv("PANVK_KBASE_EXPERIMENT"), name);
+
+#if PANVK_G925_EXPERIMENTAL
+   /* Hardware-candidate features enabled by the experimental profile so DXVK
+    * gets the feature set it probes for. Runtime PANVK_KBASE_EXPERIMENT still
+    * applies on top. */
+   return true;
+#else
+   return kbase_list_contains(getenv("PANVK_KBASE_EXPERIMENT"), name);
 #endif
 }
 
@@ -131,10 +126,22 @@ bool
 panvk_kbase_wsi_enabled(void)
 {
    /* Enabled by default in this fork so Winlator/Ludashi/DXVK can present.
-    * Explicitly opt out with PANVK_KBASE_WSI_DISABLE=1. */
+     * Explicitly opt out with PANVK_KBASE_WSI_DISABLE=1. */
    if (getenv("PANVK_KBASE_WSI_DISABLE") != NULL)
       return false;
    return true;
+}
+
+bool
+panvk_kbase_use_software_wsi(void)
+{
+   /* kbase presentation defaults to the native path now that dma-heap export
+    * is on by default. Force the software readback path with
+    * PANVK_KBASE_WSI_SW=1. PANVK_KBASE_WSI_NATIVE is accepted for backward
+    * compatibility and also selects the native path. */
+   if (getenv("PANVK_KBASE_WSI_SW") != NULL)
+      return true;
+   return false;
 }
 
 static bool

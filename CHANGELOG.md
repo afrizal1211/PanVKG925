@@ -4,6 +4,44 @@ All notable changes to the PanVKG925 driver fork are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0-alpha.4] - 2026-10-20
+
+Switch kbase presentation from the **software readback path** to the **native
+dma-buf path**, matching the working G925 reference
+(`adesyaefull/panvk-kbase-android-g925`).
+
+### Why
+
+Our fork assumed "kbase cannot export dma-buf" and therefore forced
+`wsi_device_options.sw_device = true`. But the kmod already implements dma-buf
+export through a **dma-heap** (`DMA_HEAP_IOCTL_ALLOC` + kbase import) — it was
+just gated behind `PANVK_KBASE_DMA_HEAP`, which Winlator never sets. With no
+export and software presentation, every present did a GPU→CPU readback while
+`disable_unordered_submits` kept WSI submits on the kbase queue — a plausible
+cause of the reported D3D9/DXVK present stall after device creation.
+
+The reference driver enables `/dev/dma_heap/system` by default and presents via
+the native Android window path.
+
+### Changed
+
+- `kbase_kmod.c` now defaults the dma-buf heap to `/dev/dma_heap/system` when
+  `PANVK_KBASE_DMA_HEAP` is unset. An empty value or `0` disables export and
+  falls back to the software path (and logs that it did).
+- `panvk_wsi.c` defaults to the **native** WSI path; the software readback path
+  is now opt-in via `PANVK_KBASE_WSI_SW=1`. `PANVK_KBASE_WSI_NATIVE` is still
+  accepted.
+- kbase WSI now **forces FIFO** present mode (queued present-mode
+  synchronization is not validated on kbase), matching the reference.
+- Refactored the experiment-list parsing into `kbase_list_contains()`.
+
+### Still open
+
+Buffer export is used for WSI only; `supports_modifiers` stays off for kbase
+until format modifiers are negotiated. The D3D9/DXVK stall needs re-testing on
+device with this change; software WSI remains available as a fallback via
+`PANVK_KBASE_WSI_SW=1`.
+
 ## [0.1.0-alpha.3] - 2026-10-20
 
 Fix a **self-contradictory experimental build** that could wedge DXVK.

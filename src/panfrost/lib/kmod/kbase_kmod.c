@@ -290,15 +290,24 @@ kbase_kmod_dev_create(int fd, uint32_t flags,
    simple_mtx_init(&dev->jit_lock, mtx_plain);
    dev->is_csf = is_csf;
 
-   /* Opt-in dma-buf backing for WSI/export.  Without this, BOs are allocated
-    * through MEM_ALLOC and cannot be exported (kbase has no dma-buf exporter).
-    * Keeping it behind an environment variable preserves the default path. */
-   const char *heap_path = getenv("PANVK_KBASE_DMA_HEAP");
-   if (heap_path && heap_path[0] && strcmp(heap_path, "0") != 0) {
+   /* dma-buf backing for WSI/export.  kbase has no kernel-side dma-buf
+    * exporter, so native/graphics WSI requires BOs allocated through the system
+    * dma-heap and imported into kbase.  The G925 fork defaults this on
+    * (/dev/dma_heap/system) so presentation works without environment setup;
+    * PANVK_KBASE_DMA_HEAP overrides, and an empty value or "0" disables it to
+    * fall back to the MEM_ALLOC + software WSI path. */
+   static const char default_heap[] = "/dev/dma_heap/system";
+   const char *env_heap = getenv("PANVK_KBASE_DMA_HEAP");
+   const char *heap_path = env_heap ? env_heap : default_heap;
+   if (heap_path[0] && strcmp(heap_path, "0") != 0) {
       dev->dma_heap_fd = open(heap_path, O_RDONLY | O_CLOEXEC);
       if (dev->dma_heap_fd < 0)
          fprintf(stderr, "kbase: dma-heap %s unavailable: %s\n", heap_path,
                  strerror(errno));
+   } else {
+      fprintf(stderr,
+              "kbase: dma-heap export disabled; native WSI unavailable, "
+              "using software presentation\n");
    }
    return &dev->base;
 }

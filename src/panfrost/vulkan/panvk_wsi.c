@@ -50,19 +50,20 @@ panvk_wsi_init(struct panvk_physical_device *physical_device)
       to_panvk_instance(physical_device->vk.instance);
    VkResult result;
 
+   const bool is_kbase = panvk_physical_device_uses_kbase(physical_device);
+
    result = wsi_device_init(&physical_device->wsi_device,
                             panvk_physical_device_to_handle(physical_device),
                             panvk_wsi_proc_addr, &instance->vk.alloc, -1,
                             &instance->drirc.options,
                             &(struct wsi_device_options){
-                               /* Software presentation is on by default in
-                                * this fork. PANVK_KBASE_WSI_NATIVE selects
-                                * the native X11/DRI3 path instead (relies on
-                                * the dma-heap export path); PANVK_KBASE_WSI_SW
-                                * is accepted for compatibility. */
+                               /* kbase presentation defaults to the native
+                                * dma-buf path now that /dev/dma_heap/system
+                                * export is on by default. Force the software
+                                * readback path with PANVK_KBASE_WSI_SW=1. */
                                .sw_device =
                                   panvk_kbase_wsi_enabled() &&
-                                  getenv("PANVK_KBASE_WSI_NATIVE") == NULL,
+                                  panvk_kbase_use_software_wsi(),
                             });
    if (result != VK_SUCCESS)
       return result;
@@ -70,13 +71,19 @@ panvk_wsi_init(struct panvk_physical_device *physical_device)
    /* kbase sync state lives in userspace seqnos and cannot be copied as DRM
     * syncobj payloads. Keep even empty WSI submits on the real queue so
     * present fences are backed by the kbase submission timeline. */
-   physical_device->wsi_device.disable_unordered_submits =
-      panvk_physical_device_uses_kbase(physical_device);
+   physical_device->wsi_device.disable_unordered_submits = is_kbase;
 
-   /* Native kbase WSI uses linear dma-bufs until DRM format modifiers are
-    * verified; modifiers would require VK_EXT_image_drm_format_modifier. */
-   physical_device->wsi_device.supports_modifiers =
-      !panvk_physical_device_uses_kbase(physical_device);
+   /* Queued present-mode synchronization has not been validated on kbase, so
+    * force FIFO there; the native dma-buf path otherwise honours the requested
+    * mode. This mirrors the working G925 reference. */
+   if (is_kbase && physical_device->wsi_device.override_present_mode ==
+                      VK_PRESENT_MODE_MAX_ENUM_KHR)
+      physical_device->wsi_device.override_present_mode =
+         VK_PRESENT_MODE_FIFO_KHR;
+
+   /* Native kbase WSI exports linear dma-bufs; DRM format modifiers are not
+    * negotiated yet. */
+   physical_device->wsi_device.supports_modifiers = !is_kbase;
    physical_device->wsi_device.can_present_on_device =
       panvk_can_present_on_device;
 

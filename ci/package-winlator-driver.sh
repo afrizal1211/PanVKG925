@@ -47,7 +47,7 @@ cat > "$outdir/icd.json" <<'EOF'
 {"ICD":{"library_path":"./libvulkan_panfrost.so","api_version":"1.4.363"}}
 EOF
 
-G925_DRIVER_VERSION="${G925_DRIVER_VERSION:-PanVK G925 0.1.0-alpha.3}" \
+G925_DRIVER_VERSION="${G925_DRIVER_VERSION:-PanVK G925 0.1.0-alpha.4}" \
 SHA="$sha" SIZE="$size" BUILD_ID="$build_id" OUTDIR="$outdir" VARIANT="$variant" \
 python3 - <<'PY'
 import json, os
@@ -57,7 +57,7 @@ sha = os.environ["SHA"]
 exp = variant == "experimental"
 
 if exp:
-    pkgver = "0.1.0-alpha.3-experimental"
+    pkgver = "0.1.0-alpha.4-experimental"
     drvver = "1.0.1-exp"
     name = "PanVK G925 EXP (Mali-G925-Immortalis MC11)"
     desc = (
@@ -70,7 +70,7 @@ if exp:
         "build unless you are deliberately testing a game that needs them."
     )
 else:
-    pkgver = "0.1.0-alpha.3"
+    pkgver = "0.1.0-alpha.4"
     drvver = "1.0.1-safe"
     name = "PanVK G925 (Mali-G925-Immortalis MC11)"
     desc = (

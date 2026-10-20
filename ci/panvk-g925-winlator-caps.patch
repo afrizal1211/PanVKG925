@@ -1,53 +1,231 @@
+diff --git a/src/panfrost/lib/kmod/kbase_kmod.c b/src/panfrost/lib/kmod/kbase_kmod.c
+index 039321e..2393120 100644
+--- a/src/panfrost/lib/kmod/kbase_kmod.c
++++ b/src/panfrost/lib/kmod/kbase_kmod.c
+@@ -290,15 +290,24 @@ kbase_kmod_dev_create(int fd, uint32_t flags,
+    simple_mtx_init(&dev->jit_lock, mtx_plain);
+    dev->is_csf = is_csf;
+ 
+-   /* Opt-in dma-buf backing for WSI/export.  Without this, BOs are allocated
+-    * through MEM_ALLOC and cannot be exported (kbase has no dma-buf exporter).
+-    * Keeping it behind an environment variable preserves the default path. */
+-   const char *heap_path = getenv("PANVK_KBASE_DMA_HEAP");
+-   if (heap_path && heap_path[0] && strcmp(heap_path, "0") != 0) {
++   /* dma-buf backing for WSI/export.  kbase has no kernel-side dma-buf
++    * exporter, so native/graphics WSI requires BOs allocated through the system
++    * dma-heap and imported into kbase.  The G925 fork defaults this on
++    * (/dev/dma_heap/system) so presentation works without environment setup;
++    * PANVK_KBASE_DMA_HEAP overrides, and an empty value or "0" disables it to
++    * fall back to the MEM_ALLOC + software WSI path. */
++   static const char default_heap[] = "/dev/dma_heap/system";
++   const char *env_heap = getenv("PANVK_KBASE_DMA_HEAP");
++   const char *heap_path = env_heap ? env_heap : default_heap;
++   if (heap_path[0] && strcmp(heap_path, "0") != 0) {
+       dev->dma_heap_fd = open(heap_path, O_RDONLY | O_CLOEXEC);
+       if (dev->dma_heap_fd < 0)
+          fprintf(stderr, "kbase: dma-heap %s unavailable: %s\n", heap_path,
+                  strerror(errno));
++   } else {
++      fprintf(stderr,
++              "kbase: dma-heap export disabled; native WSI unavailable, "
++              "using software presentation\n");
+    }
+    return &dev->base;
+ }
 diff --git a/src/panfrost/vulkan/panvk_kbase_device.c b/src/panfrost/vulkan/panvk_kbase_device.c
-index af3f257..b476886 100644
+index b476886..89b342a 100644
 --- a/src/panfrost/vulkan/panvk_kbase_device.c
 +++ b/src/panfrost/vulkan/panvk_kbase_device.c
-@@ -61,12 +61,48 @@ kbase_always(const char *name)
+@@ -18,13 +18,16 @@
+  *     Advertises the extensions/features that are structurally required for a
+  *     Vulkan device to be usable by Winlator/Ludashi/DXVK (promoted-core
+  *     aliases, memory-requirement/bind helpers, format lists, driver
+- *     properties, software WSI). Hardware behaviour is not over-claimed.
++ *     properties, dma-buf/native WSI). Hardware behaviour is not over-claimed.
+  *
+  *   PANVK_G925_EXPERIMENTAL == 1  ("experimental")
+  *     Additionally enables the hardware-candidate features that DXVK asks for
+  *     but which the upstream fork leaves behind the experiment switch
+- *     (multiview, descriptorIndexing, bufferDeviceAddress, ...). These are not
+- *     hardware-validated on every G925 bin, so keep this variant opt-in.
++ *     (multiview, variablePointers, shaderDrawParameters,
++ *     fragmentStoresAndAtomics, apiVersion1.2, ...). descriptorIndexing,
++ *     bufferDeviceAddress and timelineSemaphore stay off: kbase sync has no
++ *     timeline support and those paths are not validated. Keep this variant
++ *     opt-in.
+  *
+  * Either profile can still be overridden at runtime with
+  * PANVK_KBASE_EXPERIMENT=<comma list>, exactly like upstream.
+@@ -79,37 +82,10 @@ kbase_is_control(const char *name)
     return false;
  }
  
-+/* Control/rollback switches. These do not "enable a feature"; they select the
-+ * API version and gate the promoted-core set. Force-enabling them would wrongly
-+ * downgrade the device, so they must resolve to false in every profile and can
-+ * only be turned on explicitly via PANVK_KBASE_EXPERIMENT. */
++/* True when `name` appears as a comma-separated item of `env`. */
+ static bool
+-kbase_experiment(const char *name)
++kbase_list_contains(const char *env, const char *name)
+ {
+-   if (kbase_always(name))
+-      return true;
+-
+-   /* Never blanket-enable the rollback controls in the experimental profile. */
+-   if (kbase_is_control(name)) {
+-      const char *env = getenv("PANVK_KBASE_EXPERIMENT");
+-      if (!env || !*env)
+-         return false;
+-      const size_t name_len = strlen(name);
+-      for (const char *p = env; *p;) {
+-         const char *end = strchr(p, ',');
+-         const size_t len = end ? (size_t)(end - p) : strlen(p);
+-         if (len == name_len && !memcmp(p, name, len))
+-            return true;
+-         if (!end)
+-            break;
+-         p = end + 1;
+-      }
+-      return false;
+-   }
+-
+-#if PANVK_G925_EXPERIMENTAL
+-   /* Hardware-candidate features enabled by the experimental profile so DXVK
+-    * gets the feature set it probes for. Runtime PANVK_KBASE_EXPERIMENT still
+-    * applies on top. */
+-   return true;
+-#else
+-   const char *env = getenv("PANVK_KBASE_EXPERIMENT");
+    if (!env || !*env)
+       return false;
+ 
+@@ -124,6 +100,25 @@ kbase_experiment(const char *name)
+       p = end + 1;
+    }
+    return false;
++}
++
 +static bool
-+kbase_is_control(const char *name)
++kbase_experiment(const char *name)
 +{
-+   static const char *const controls[] = {
-+      "apiVersion1.0",
-+      "apiVersion1.1",
-+      NULL,
-+   };
-+   for (size_t i = 0; controls[i]; i++)
-+      if (!strcmp(controls[i], name))
-+         return true;
++   if (kbase_always(name))
++      return true;
++
++   /* Never blanket-enable the rollback controls in the experimental profile. */
++   if (kbase_is_control(name))
++      return kbase_list_contains(getenv("PANVK_KBASE_EXPERIMENT"), name);
++
++#if PANVK_G925_EXPERIMENTAL
++   /* Hardware-candidate features enabled by the experimental profile so DXVK
++    * gets the feature set it probes for. Runtime PANVK_KBASE_EXPERIMENT still
++    * applies on top. */
++   return true;
++#else
++   return kbase_list_contains(getenv("PANVK_KBASE_EXPERIMENT"), name);
+ #endif
+ }
+ 
+@@ -131,12 +126,24 @@ bool
+ panvk_kbase_wsi_enabled(void)
+ {
+    /* Enabled by default in this fork so Winlator/Ludashi/DXVK can present.
+-    * Explicitly opt out with PANVK_KBASE_WSI_DISABLE=1. */
++     * Explicitly opt out with PANVK_KBASE_WSI_DISABLE=1. */
+    if (getenv("PANVK_KBASE_WSI_DISABLE") != NULL)
+       return false;
+    return true;
+ }
+ 
++bool
++panvk_kbase_use_software_wsi(void)
++{
++   /* kbase presentation defaults to the native path now that dma-heap export
++    * is on by default. Force the software readback path with
++    * PANVK_KBASE_WSI_SW=1. PANVK_KBASE_WSI_NATIVE is accepted for backward
++    * compatibility and also selects the native path. */
++   if (getenv("PANVK_KBASE_WSI_SW") != NULL)
++      return true;
 +   return false;
 +}
 +
  static bool
- kbase_experiment(const char *name)
+ valid_device_path(const char *path)
  {
-    if (kbase_always(name))
-       return true;
+diff --git a/src/panfrost/vulkan/panvk_kbase_device.h b/src/panfrost/vulkan/panvk_kbase_device.h
+index c715cc5..89ecb78 100644
+--- a/src/panfrost/vulkan/panvk_kbase_device.h
++++ b/src/panfrost/vulkan/panvk_kbase_device.h
+@@ -20,11 +20,15 @@ enum panvk_kbase_selection {
+    PANVK_KBASE_SELECTION_INVALID,
+ };
  
-+   /* Never blanket-enable the rollback controls in the experimental profile. */
-+   if (kbase_is_control(name)) {
-+      const char *env = getenv("PANVK_KBASE_EXPERIMENT");
-+      if (!env || !*env)
-+         return false;
-+      const size_t name_len = strlen(name);
-+      for (const char *p = env; *p;) {
-+         const char *end = strchr(p, ',');
-+         const size_t len = end ? (size_t)(end - p) : strlen(p);
-+         if (len == name_len && !memcmp(p, name, len))
-+            return true;
-+         if (!end)
-+            break;
-+         p = end + 1;
-+      }
-+      return false;
-+   }
+-/* True when the kbase software/native WSI path should be enabled. The G925
+- * build turns this on by default so Windows apps get a swapchain; set
+- * PANVK_KBASE_WSI_DISABLE=1 at runtime to force it off. */
++/* True when the kbase WSI path should be enabled. The G925 build turns this on
++ * by default so Windows apps get a swapchain; set PANVK_KBASE_WSI_DISABLE=1 at
++ * runtime to force it off. */
+ bool panvk_kbase_wsi_enabled(void);
+ 
++/* True when presentation must use the software (readback) WSI path instead of
++ * the default native dma-buf path. Opt in with PANVK_KBASE_WSI_SW=1. */
++bool panvk_kbase_use_software_wsi(void);
 +
- #if PANVK_G925_EXPERIMENTAL
-    /* Hardware-candidate features enabled by the experimental profile so DXVK
-     * gets the feature set it probes for. Runtime PANVK_KBASE_EXPERIMENT still
+ enum panvk_kbase_selection panvk_kbase_select_device(
+    const char *path, const char *restriction, char selected[PANVK_KBASE_PATH_SIZE]);
+ VkResult panvk_kbase_open_device(const char *path,
+diff --git a/src/panfrost/vulkan/panvk_wsi.c b/src/panfrost/vulkan/panvk_wsi.c
+index c9f6fc5..bacd4b8 100644
+--- a/src/panfrost/vulkan/panvk_wsi.c
++++ b/src/panfrost/vulkan/panvk_wsi.c
+@@ -50,19 +50,20 @@ panvk_wsi_init(struct panvk_physical_device *physical_device)
+       to_panvk_instance(physical_device->vk.instance);
+    VkResult result;
+ 
++   const bool is_kbase = panvk_physical_device_uses_kbase(physical_device);
++
+    result = wsi_device_init(&physical_device->wsi_device,
+                             panvk_physical_device_to_handle(physical_device),
+                             panvk_wsi_proc_addr, &instance->vk.alloc, -1,
+                             &instance->drirc.options,
+                             &(struct wsi_device_options){
+-                               /* Software presentation is on by default in
+-                                * this fork. PANVK_KBASE_WSI_NATIVE selects
+-                                * the native X11/DRI3 path instead (relies on
+-                                * the dma-heap export path); PANVK_KBASE_WSI_SW
+-                                * is accepted for compatibility. */
++                               /* kbase presentation defaults to the native
++                                * dma-buf path now that /dev/dma_heap/system
++                                * export is on by default. Force the software
++                                * readback path with PANVK_KBASE_WSI_SW=1. */
+                                .sw_device =
+                                   panvk_kbase_wsi_enabled() &&
+-                                  getenv("PANVK_KBASE_WSI_NATIVE") == NULL,
++                                  panvk_kbase_use_software_wsi(),
+                             });
+    if (result != VK_SUCCESS)
+       return result;
+@@ -70,13 +71,19 @@ panvk_wsi_init(struct panvk_physical_device *physical_device)
+    /* kbase sync state lives in userspace seqnos and cannot be copied as DRM
+     * syncobj payloads. Keep even empty WSI submits on the real queue so
+     * present fences are backed by the kbase submission timeline. */
+-   physical_device->wsi_device.disable_unordered_submits =
+-      panvk_physical_device_uses_kbase(physical_device);
+-
+-   /* Native kbase WSI uses linear dma-bufs until DRM format modifiers are
+-    * verified; modifiers would require VK_EXT_image_drm_format_modifier. */
+-   physical_device->wsi_device.supports_modifiers =
+-      !panvk_physical_device_uses_kbase(physical_device);
++   physical_device->wsi_device.disable_unordered_submits = is_kbase;
++
++   /* Queued present-mode synchronization has not been validated on kbase, so
++    * force FIFO there; the native dma-buf path otherwise honours the requested
++    * mode. This mirrors the working G925 reference. */
++   if (is_kbase && physical_device->wsi_device.override_present_mode ==
++                      VK_PRESENT_MODE_MAX_ENUM_KHR)
++      physical_device->wsi_device.override_present_mode =
++         VK_PRESENT_MODE_FIFO_KHR;
++
++   /* Native kbase WSI exports linear dma-bufs; DRM format modifiers are not
++    * negotiated yet. */
++   physical_device->wsi_device.supports_modifiers = !is_kbase;
+    physical_device->wsi_device.can_present_on_device =
+       panvk_can_present_on_device;
+ 

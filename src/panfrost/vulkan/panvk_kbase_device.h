@@ -20,10 +20,14 @@ enum panvk_kbase_selection {
    PANVK_KBASE_SELECTION_INVALID,
 };
 
-/* True when the kbase software/native WSI path should be enabled. The G925
- * build turns this on by default so Windows apps get a swapchain; set
- * PANVK_KBASE_WSI_DISABLE=1 at runtime to force it off. */
+/* True when the kbase WSI path should be enabled. The G925 build turns this on
+ * by default so Windows apps get a swapchain; set PANVK_KBASE_WSI_DISABLE=1 at
+ * runtime to force it off. */
 bool panvk_kbase_wsi_enabled(void);
+
+/* True when presentation must use the software (readback) WSI path instead of
+ * the default native dma-buf path. Opt in with PANVK_KBASE_WSI_SW=1. */
+bool panvk_kbase_use_software_wsi(void);
 
 enum panvk_kbase_selection panvk_kbase_select_device(
    const char *path, const char *restriction, char selected[PANVK_KBASE_PATH_SIZE]);
