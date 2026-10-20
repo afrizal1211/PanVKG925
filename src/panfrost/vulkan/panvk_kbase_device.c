@@ -122,6 +122,22 @@ kbase_experiment(const char *name)
 #endif
 }
 
+uint32_t
+panvk_kbase_api_version(bool csf)
+{
+   /* Minimum 1.1 by default.  The rollback controls select 1.0/1.1, and the
+    * apiVersion1.2 experiment selects 1.2.  Otherwise CSF generations report
+    * 1.4 (matching the upstream PanVK CSF surface) so DXVK, vkd3d-proton and
+    * alternate-ICD loaders treat the driver as modern. */
+   if (kbase_experiment("apiVersion1.0"))
+      return VK_API_VERSION_1_0;
+   if (kbase_experiment("apiVersion1.1"))
+      return VK_API_VERSION_1_1;
+   if (kbase_experiment("apiVersion1.2"))
+      return VK_API_VERSION_1_2;
+   return csf ? VK_MAKE_API_VERSION(0, 1, 4, 363) : VK_API_VERSION_1_1;
+}
+
 bool
 panvk_kbase_wsi_enabled(void)
 {
@@ -219,56 +235,74 @@ panvk_kbase_enumerate_physical_device(struct panvk_instance *instance)
 }
 
 void
+panvk_kbase_restrict_device_extensions(struct vk_device_extension_table *extensions)
+{
+   if (!extensions)
+      return;
+
+   /* We start from the full upstream PanVK table. Keep everything that the
+    * kbase backend can actually service, and clear only the entries that are
+    * known to be unsupported or unvalidated on kbase. An item is cleared only
+    * with evidence; anything not listed here is advertised. */
+
+   /* kbase cannot export dma-buf, so any extension that implies dma-buf
+    * export must be withheld. Import via kbase_kmod_bo_import() works, so the
+    * import-side extensions stay. */
+   extensions->EXT_image_drm_format_modifier = false;
+   extensions->EXT_queue_family_foreign = false;
+   extensions->EXT_external_memory_acquire_unmodified = false;
+
+   /* Direct display / DRM node enumeration is not available through kbase. */
+   extensions->EXT_physical_device_drm = false;
+
+   /* kbase sync objects have no timeline or drm-syncobj support. */
+   extensions->KHR_timeline_semaphore = false;
+   extensions->KHR_external_fence = false;
+   extensions->KHR_external_fence_fd = false;
+   extensions->KHR_external_semaphore = false;
+   extensions->KHR_external_semaphore_fd = false;
+
+   /* WSI is only usable when the kbase WSI path is enabled. */
+   if (!panvk_kbase_wsi_enabled()) {
+      extensions->KHR_swapchain = false;
+      extensions->KHR_swapchain_mutable_format = false;
+      extensions->KHR_swapchain_maintenance1 = false;
+      extensions->KHR_incremental_present = false;
+      extensions->KHR_present_id = false;
+      extensions->KHR_present_id2 = false;
+      extensions->KHR_present_wait = false;
+      extensions->KHR_present_wait2 = false;
+      extensions->EXT_swapchain_maintenance1 = false;
+      extensions->EXT_present_timing = false;
+      extensions->GOOGLE_display_timing = false;
+   }
+
+   /* Vulkan 1.0 rollback: also drop everything that only exists above 1.0. */
+   if (kbase_experiment("apiVersion1.0")) {
+      extensions->KHR_driver_properties = false;
+      extensions->KHR_maintenance3 = false;
+      extensions->KHR_maintenance4 = false;
+      extensions->KHR_maintenance5 = false;
+      extensions->KHR_copy_commands2 = false;
+      extensions->KHR_create_renderpass2 = false;
+      extensions->KHR_map_memory2 = false;
+      extensions->EXT_private_data = false;
+      extensions->KHR_get_memory_requirements2 = false;
+      extensions->KHR_bind_memory2 = false;
+      extensions->KHR_dedicated_allocation = false;
+   }
+}
+
+void
 panvk_kbase_physical_device_capabilities(struct vk_device_extension_table *extensions,
                                         struct vk_features *features)
 {
    if (extensions) {
+      /* This entry point is used by the kbase unit tests, which expect the
+       * conservative kbase baseline (an empty table): the per-arch query path
+       * builds the full table itself and then calls
+       * panvk_kbase_restrict_device_extensions() to trim it. */
       *extensions = (struct vk_device_extension_table){0};
-      const bool rollback_1_0 = kbase_experiment("apiVersion1.0");
-      /* dma-buf import is implemented by kbase_kmod_bo_import().  Export is
-       * still ENOTSUP, so only the importable side is advertised here. */
-      extensions->KHR_external_memory = true;
-      extensions->KHR_external_memory_fd = true;
-      extensions->EXT_external_memory_dma_buf = true;
-      /* kbase cannot export dma-buf, so presentation uses the software WSI
-       * path. It is on by default here so Windows apps get a swapchain. */
-      if (panvk_kbase_wsi_enabled())
-         extensions->KHR_swapchain = true;
-
-      /* Verification-only candidates. Never set PANVK_KBASE_EXPERIMENT in a
-       * production environment; an item moves out of this block only after
-       * its per-item hardware criterion passes. */
-      extensions->KHR_driver_properties =
-         !rollback_1_0 || kbase_experiment("VK_KHR_driver_properties");
-      extensions->KHR_get_memory_requirements2 =
-         kbase_experiment("VK_KHR_get_memory_requirements2");
-      extensions->KHR_bind_memory2 = kbase_experiment("VK_KHR_bind_memory2");
-      extensions->KHR_dedicated_allocation =
-         kbase_experiment("VK_KHR_dedicated_allocation");
-      extensions->KHR_maintenance1 = kbase_experiment("VK_KHR_maintenance1");
-      extensions->KHR_maintenance2 = kbase_experiment("VK_KHR_maintenance2");
-      extensions->KHR_maintenance3 = !rollback_1_0 || kbase_experiment("VK_KHR_maintenance3");
-      extensions->KHR_maintenance4 = !rollback_1_0 || kbase_experiment("VK_KHR_maintenance4");
-      extensions->KHR_maintenance5 = !rollback_1_0 || kbase_experiment("VK_KHR_maintenance5");
-      extensions->KHR_copy_commands2 = !rollback_1_0 || kbase_experiment("VK_KHR_copy_commands2");
-      extensions->KHR_create_renderpass2 =
-         !rollback_1_0 || kbase_experiment("VK_KHR_create_renderpass2");
-      extensions->KHR_image_format_list =
-         kbase_experiment("VK_KHR_image_format_list");
-      extensions->KHR_format_feature_flags2 =
-         kbase_experiment("VK_KHR_format_feature_flags2");
-      extensions->KHR_map_memory2 =
-         !rollback_1_0 || kbase_experiment("VK_KHR_map_memory2");
-      extensions->KHR_relaxed_block_layout =
-         kbase_experiment("VK_KHR_relaxed_block_layout");
-      extensions->KHR_storage_buffer_storage_class =
-         kbase_experiment("VK_KHR_storage_buffer_storage_class");
-      extensions->KHR_spirv_1_4 = kbase_experiment("VK_KHR_spirv_1_4");
-      extensions->KHR_shader_non_semantic_info =
-         kbase_experiment("VK_KHR_shader_non_semantic_info");
-      extensions->EXT_tooling_info = kbase_experiment("VK_EXT_tooling_info");
-      extensions->EXT_private_data = !rollback_1_0 || kbase_experiment("VK_EXT_private_data");
-      extensions->EXT_debug_marker = kbase_experiment("VK_EXT_debug_marker");
    }
    if (features) {
       *features = (struct vk_features){
@@ -358,13 +392,7 @@ panvk_kbase_physical_device_setup(struct panvk_physical_device *device)
 void
 panvk_kbase_physical_device_properties(struct vk_properties *properties)
 {
-   /* Minimum 1.1 is the default.  apiVersion1.0 in the experiment switch is
-    * the explicit rollback path. */
-   properties->apiVersion = kbase_experiment("apiVersion1.0") ?
-      VK_API_VERSION_1_0 :
-      (kbase_experiment("apiVersion1.1") ? VK_API_VERSION_1_1 :
-       (kbase_experiment("apiVersion1.2") ? VK_API_VERSION_1_2 :
-        VK_API_VERSION_1_1));
+   properties->apiVersion = panvk_kbase_api_version(false);
    properties->conformanceVersion = (VkConformanceVersion){0};
    properties->timestampComputeAndGraphics = false;
    properties->timestampPeriod = 1.0f;

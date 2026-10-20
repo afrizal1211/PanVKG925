@@ -2,3 +2,9 @@
 # as HAL_MODULE_INFO_SYM (which is just a #define for HMI) and it's an
 # instance of struct hwvulkan_module_t.
 HMI
+
+# Standard Vulkan ICD loader entry points, needed by alternate-ICD loaders
+# (Winlator, Ludashi, AdrenoTools-style, GameHub) in addition to HMI.
+vk_icdGetInstanceProcAddr
+vk_icdGetPhysicalDeviceProcAddr
+vk_icdNegotiateLoaderICDInterfaceVersion

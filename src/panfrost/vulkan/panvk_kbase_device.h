@@ -37,6 +37,11 @@ VkResult panvk_kbase_open_device(const char *path,
 VkResult panvk_kbase_enumerate_physical_device(struct panvk_instance *instance);
 void panvk_kbase_physical_device_capabilities(struct vk_device_extension_table *extensions,
                                              struct vk_features *features);
+/* Applies the kbase deny-list on top of an already-populated (full upstream)
+ * device-extension table. Used by the per-arch extension query so the kbase
+ * backend advertises the same broad capability surface as the DRM backend. */
+void panvk_kbase_restrict_device_extensions(struct vk_device_extension_table *extensions);
+uint32_t panvk_kbase_api_version(bool csf);
 void panvk_kbase_physical_device_setup(struct panvk_physical_device *device);
 void panvk_kbase_physical_device_properties(struct vk_properties *properties);
 

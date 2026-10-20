@@ -42,12 +42,6 @@ panvk_per_arch(get_physical_device_extensions)(
    const struct panvk_instance *instance,
    struct vk_device_extension_table *ext)
 {
-#ifdef HAVE_PAN_KMOD_KBASE
-   if (panvk_physical_device_uses_kbase(device)) {
-      panvk_kbase_physical_device_capabilities(ext, NULL);
-      return;
-   }
-#endif
    bool has_gralloc = vk_android_get_ugralloc() != NULL;
 
    *ext = (struct vk_device_extension_table){
@@ -260,6 +254,19 @@ panvk_per_arch(get_physical_device_extensions)(
       .ARM_scheduling_controls = true,
       .ARM_rasterization_order_attachment_access = PAN_ARCH >= 10,
    };
+
+#ifdef HAVE_PAN_KMOD_KBASE
+   if (panvk_physical_device_uses_kbase(device)) {
+      /* Start from the full upstream PanVK extension set above so that
+       * alternate-ICD loaders (Winlator, Ludashi, AdrenoTools-style,
+       * GameHub) and DXVK/vkd3d-proton see a modern, complete capability
+       * surface, then deny-list only the extensions the kbase backend has
+       * not been validated against. Historically the kbase path replaced
+       * this table with a tiny allow-list, which made the driver look
+       * ancient and caused app-side detection to force-close. */
+      panvk_kbase_restrict_device_extensions(ext);
+   }
+#endif
 }
 
 static bool
@@ -1445,8 +1452,14 @@ panvk_per_arch(get_physical_device_properties)(
           VK_UUID_SIZE);
 
 #ifdef HAVE_PAN_KMOD_KBASE
-   if (panvk_physical_device_uses_kbase(device))
+   if (panvk_physical_device_uses_kbase(device)) {
       panvk_kbase_physical_device_properties(properties);
+      /* CSF generations (G925 and newer, PAN_ARCH >= 10) expose the full
+       * Vulkan 1.4 command surface through kbase. Report it so DXVK,
+       * vkd3d-proton and alternate-ICD loaders classify the driver as
+       * modern. The apiVersion1.0/1.1/1.2 rollback experiments still win. */
+      properties->apiVersion = panvk_kbase_api_version(PAN_ARCH >= 10);
+   }
 #endif
 
    if (PANVK_DEBUG(STARTUP)) {

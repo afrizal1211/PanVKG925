@@ -5,6 +5,15 @@
 		# instance of struct hwvulkan_module_t.
 		HMI;
 
+		# Also export the standard Vulkan ICD loader entry points. Android's
+		# own loader uses HMI, but alternate-ICD loaders (Winlator, Ludashi,
+		# AdrenoTools-style, GameHub) discover and dispatch the driver through
+		# these symbols. Enabling the Android HAL path must not hide them, or
+		# those loaders never see the driver or its extensions.
+		vk_icdGetInstanceProcAddr;
+		vk_icdGetPhysicalDeviceProcAddr;
+		vk_icdNegotiateLoaderICDInterfaceVersion;
+
 	local:
 		# When static linking LLVM, all its symbols are public API.
 		# That may cause symbol collision, so explicitly demote everything.

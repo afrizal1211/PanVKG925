@@ -196,6 +196,10 @@ static const struct vk_instance_extension_table panvk_instance_extensions = {
 static const struct vk_instance_extension_table panvk_kbase_instance_extensions = {
    .KHR_get_physical_device_properties2 = true,
    .KHR_external_memory_capabilities = true,
+   .KHR_device_group_creation = true,
+   .KHR_portability_enumeration = true,
+   .EXT_debug_report = true,
+   .EXT_debug_utils = true,
 #ifdef PANVK_USE_WSI_PLATFORM
    /* WSI needs these at the instance level. kbase cannot export dma-buf, so
     * presentation only works through the software path; the extensions are
@@ -205,6 +209,9 @@ static const struct vk_instance_extension_table panvk_kbase_instance_extensions 
    .EXT_surface_maintenance1 = true,
    .EXT_swapchain_colorspace = true,
    .KHR_get_surface_capabilities2 = true,
+#endif
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+   .KHR_android_surface = true,
 #endif
 #ifdef VK_USE_PLATFORM_XCB_KHR
    .KHR_xcb_surface = true,

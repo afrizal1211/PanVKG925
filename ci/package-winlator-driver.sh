@@ -47,7 +47,7 @@ cat > "$outdir/icd.json" <<'EOF'
 {"ICD":{"library_path":"./libvulkan_panfrost.so","api_version":"1.4.363"}}
 EOF
 
-G925_DRIVER_VERSION="${G925_DRIVER_VERSION:-PanVK G925 0.1.0-alpha.4}" \
+G925_DRIVER_VERSION="${G925_DRIVER_VERSION:-PanVK G925 0.1.0-alpha.5}" \
 SHA="$sha" SIZE="$size" BUILD_ID="$build_id" OUTDIR="$outdir" VARIANT="$variant" \
 python3 - <<'PY'
 import json, os
@@ -57,7 +57,7 @@ sha = os.environ["SHA"]
 exp = variant == "experimental"
 
 if exp:
-    pkgver = "0.1.0-alpha.4-experimental"
+    pkgver = "0.1.0-alpha.5-experimental"
     drvver = "1.0.1-exp"
     name = "PanVK G925 EXP (Mali-G925-Immortalis MC11)"
     desc = (
@@ -70,16 +70,19 @@ if exp:
         "build unless you are deliberately testing a game that needs them."
     )
 else:
-    pkgver = "0.1.0-alpha.4"
+    pkgver = "0.1.0-alpha.5"
     drvver = "1.0.1-safe"
     name = "PanVK G925 (Mali-G925-Immortalis MC11)"
     desc = (
         "PanVK (Mesa) Vulkan ICD for the 11-core Mali-G925-Immortalis "
         "(MT6991/MT8799, Dimensity 9400+) over the vendor mali_kbase CSF kernel "
-        "driver (no DRM render node needed). Includes the MC11 core-count fix and "
-        "advertises the swapchain/structural extension set Winlator/Ludashi/DXVK "
-        "need to create a device and present, without over-claiming unverified "
-        "hardware features. Alpha build; not a Vulkan conformance claim."
+        "driver (no DRM render node needed). Includes the MC11 core-count fix, "
+        "exports the standard Vulkan ICD loader entry points alongside HMI so "
+        "alternate-ICD loaders (Winlator/Ludashi/AdrenoTools-style/GameHub) can "
+        "detect and dispatch the driver, and advertises the full upstream PanVK "
+        "extension set minus the kbase-unsupported entries (dma-buf export, "
+        "timeline/drm-syncobj, DRM node enumeration). Reports Vulkan 1.4.363 on "
+        "CSF generations. Alpha build; not a Vulkan conformance claim."
     )
 
 meta = {

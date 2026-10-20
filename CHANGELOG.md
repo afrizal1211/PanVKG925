@@ -4,6 +4,61 @@ All notable changes to the PanVKG925 driver fork are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0-alpha.5] - 2026-10-20
+
+Make the driver **detectable and modern-looking** to alternate-ICD loaders by
+exporting the standard Vulkan ICD entry points and advertising the full upstream
+PanVK extension/API surface on kbase.
+
+### Why
+
+Two independent gates made Winlator/Ludashi see an ancient, crippled driver:
+
+1. **Symbols.** The Android build linked against `vulkan-android.sym`, which
+   exported only `HMI` (the Android HAL entry). The standard ICD loader symbols
+   (`vk_icdGetInstanceProcAddr`, `vk_icdGetPhysicalDeviceProcAddr`,
+   `vk_icdNegotiateLoaderICDInterfaceVersion`) were demoted to local by the
+   version script. Loaders that discover drivers through the ICD interface
+   rather than the HAL (`HMI`) never found the driver at all.
+2. **Capabilities.** The kbase path replaced the upstream device-extension table
+   with a ~20-entry allow-list and capped `apiVersion` at 1.1/1.2. The
+   reference (`zenithblue-oss/panvk-kbase-android`) advertises ~194 extensions
+   and reports `1.4.363`; DXVK/vkd3d-proton and app-side probes classify a
+   driver by exactly these numbers.
+
+### Changed
+
+- `vulkan-android.sym` / `vulkan-icd-android-symbols.txt`: export the three
+  standard ICD loader entry points **in addition to** `HMI`. Enabling the
+  Android HAL path no longer hides them.
+- `panvk_vX_physical_device.c`: the kbase path now starts from the **full
+  upstream PanVK device-extension table** and applies a small deny-list
+  (`panvk_kbase_restrict_device_extensions()`) instead of replacing it with an
+  allow-list. Denied on kbase: dma-buf-export-implying extensions
+  (`EXT_image_drm_format_modifier`, `EXT_queue_family_foreign`,
+  `EXT_external_memory_acquire_unmodified`), DRM node enumeration
+  (`EXT_physical_device_drm`), timeline/drm-syncobj sync
+  (`KHR_timeline_semaphore`, `KHR_external_fence[_fd]`,
+  `KHR_external_semaphore[_fd]`), and — only when kbase WSI is disabled — the
+  swapchain/present extensions.
+- `panvk_kbase_api_version()`: reports **Vulkan 1.4.363** on CSF generations
+  (`PAN_ARCH >= 10`, includes G925); non-CSF and the `apiVersion1.0/1.1/1.2`
+  rollback experiments are unchanged.
+- `panvk_kbase_instance_extensions`: also advertise
+  `KHR_device_group_creation`, `KHR_portability_enumeration`,
+  `EXT_debug_report`, `EXT_debug_utils`, and (on Android)
+  `KHR_android_surface`.
+- `icd.json` already declared `api_version 1.4.363`; it now matches the runtime
+  `apiVersion` on CSF.
+
+### Still open
+
+The feature table (`panvk_kbase_physical_device_capabilities` features) remains
+the conservative, hardware-validated set. `robustImageAccess2` (from
+`VK_EXT_robustness2`) is still reported off; if vkd3d-proton's device creation
+proves to require it, that is the next feature to validate. The alpha.4
+D3D9/DXVK present stall still needs on-device re-testing.
+
 ## [0.1.0-alpha.4] - 2026-10-20
 
 Switch kbase presentation from the **software readback path** to the **native
